@@ -33,7 +33,7 @@ Resource* find_resource(char const* uri, Resource* head) {
 }
 
 // General handler function
-int handler(char const* payload, CoapPDU *request, int sockfd, struct sockaddr_storage *recvFrom) {
+int handler(char const* payload, CoapPDU::ContentFormat content_format, CoapPDU *request, int sockfd, struct sockaddr_storage *recvFrom) {
 	// We only use IPv4
 	socklen_t addrLen = sizeof(struct sockaddr_in);
 	
@@ -50,7 +50,7 @@ int handler(char const* payload, CoapPDU *request, int sockfd, struct sockaddr_s
 			break;
 		case CoapPDU::COAP_GET:
 			response->setCode(CoapPDU::COAP_CONTENT);
-			response->setContentFormat(CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN);
+			response->setContentFormat(content_format);
 			response->setPayload((uint8_t*)payload, strlen(payload));
 			break;
 		/* TODO
@@ -104,17 +104,17 @@ int handler(char const* payload, CoapPDU *request, int sockfd, struct sockaddr_s
 // =============== TEST ===============
 
 int discover_handler(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom) {
-	handler("/temperature", pdu, sockfd, recvFrom);
+	handler("</temperature>", CoapPDU::COAP_CONTENT_FORMAT_APP_LINK, pdu, sockfd, recvFrom);
 	return 0;
 }
 
 int temperature_handler(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom) {
-	handler("19", pdu, sockfd, recvFrom);
+	handler("19", CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN, pdu, sockfd, recvFrom);
 	return 0;
 }
 
 int humidity_handler(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom) {
-	handler("75%", pdu, sockfd, recvFrom);
+	handler("75%", CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN, pdu, sockfd, recvFrom);
 	return 0;
 }
 
