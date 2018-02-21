@@ -103,8 +103,16 @@ int handler(char const* payload, CoapPDU::ContentFormat content_format, CoapPDU 
 
 // =============== TEST ===============
 
+// Regular CoAP DISCOVERY
+// int discover_handler(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom) {
+// 	handler("</temperature>", CoapPDU::COAP_CONTENT_FORMAT_APP_LINK, pdu, sockfd, recvFrom);
+// 	return 0;
+// }
+
+// CoAP PUBSUB Discovery
+// QUESTION: Citation marks around rt or not? Compare with Herjulf impl coap.c
 int discover_handler(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom) {
-	handler("</temperature>", CoapPDU::COAP_CONTENT_FORMAT_APP_LINK, pdu, sockfd, recvFrom);
+	handler("</ps/>;\"rt=core.ps\";ct=40", CoapPDU::COAP_CONTENT_FORMAT_APP_LINK, pdu, sockfd, recvFrom);
 	return 0;
 }
 
@@ -119,8 +127,14 @@ int humidity_handler(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom
 }
 
 void test_make_resources() {
+        // Regular CoAP DISCOVERY
+	// Resource* discover = (Resource*) malloc(sizeof (Resource));
+	// discover->uri = "/.well-known/core";
+	// discover->callback = discover_handler;
+
+        // CoAP PUB/SUB DISCOVERY
 	Resource* discover = (Resource*) malloc(sizeof (Resource));
-	discover->uri = "/.well-known/core";
+	discover->uri = "/.well-known/core?rt=core.ps";
 	discover->callback = discover_handler;
 
 	Resource* temperature = (Resource*) malloc(sizeof (Resource));
