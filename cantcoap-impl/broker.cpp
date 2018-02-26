@@ -12,41 +12,52 @@
 
 typedef int (*CoapHandler)(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom);
 
-// We could use a more efficient structure than linked list
 typedef struct Resource {
-    char const * uri;
-    CoapHandler callback;
+    const char* uri;
+    const char* rt;
+    int ct;
+    const char* val;
+    Resource * children;
     Resource * next;
 } Resource;
 
 static Resource* head;
 
-Resource* find_resource(char const* uri, Resource* head) {
+Resource* find_resource(const char* uri, Resource* head) {
 	Resource* node = head;
-	while (node != 0) {
-		if (strcmp(uri, node->uri) == 0)
+	while (node != NULL) {
+		if (strstr(uri, node->uri) == uri)
 			break;
 		node = node->next;
 	}
 	
+	if (node != NULL) {
+	    Resource* node2 = find_resource(uri + strlen(node->uri), node->children);
+	    node = node2 != NULL ? node2 : node;
+    }
 	return node;
 }
 
+/*const char* extract_queries(const char* uri) {
+    char* q = strstr(uri, "?");
+    if (q != NULL) {
+        
+    }
+}*/
+
 // General handler function
-int handler(char const* payload, CoapPDU::ContentFormat content_format, CoapPDU *request, int sockfd, struct sockaddr_storage *recvFrom) {
-	// We only use IPv4
-	socklen_t addrLen = sizeof(struct sockaddr_in);
+int handler(Resource* resource, const char* queries CoapPDU *request, int sockfd, struct sockaddr_storage *recvFrom) {
+    const char* payload = resource->val;
+    int content_format = resource->ct;
+	socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
 	
-	// TODO claim back memory
 	CoapPDU *response = new CoapPDU();
 	response->setVersion(1);
-	// OBS:
-	response->setMessageID(request->getMessageID());
+	response->setMessageID(request->getMessageID()); // OBS
 	response->setToken(request->getTokenPointer(), request->getTokenLength());
 
 	switch(request->getCode()) {
-		case CoapPDU::COAP_EMPTY:
-			// send RST
+		case CoapPDU::COAP_EMPTY: // send RST
 			break;
 		case CoapPDU::COAP_GET:
 			response->setCode(CoapPDU::COAP_CONTENT);
@@ -93,7 +104,9 @@ int handler(char const* payload, CoapPDU::ContentFormat content_format, CoapPDU 
 		(sockaddr*) recvFrom,
 		addrLen
 	);
-
+    
+    delete response;
+    
 	if(sent < 0) {
 		return 1;
 	}
@@ -103,56 +116,55 @@ int handler(char const* payload, CoapPDU::ContentFormat content_format, CoapPDU 
 
 // =============== TEST ===============
 
-// Regular CoAP DISCOVERY
-// int discover_handler(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom) {
-// 	handler("</temperature>", CoapPDU::COAP_CONTENT_FORMAT_APP_LINK, pdu, sockfd, recvFrom);
-// 	return 0;
-// }
-
 // CoAP PUBSUB Discovery
 // QUESTION: Citation marks around rt or not? Compare with Herjulf impl coap.c
-int discover_handler(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom) {
-	handler("</ps/>;\"rt=core.ps\";ct=40", CoapPDU::COAP_CONTENT_FORMAT_APP_LINK, pdu, sockfd, recvFrom);
-	return 0;
-}
-
-int temperature_handler(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom) {
-	handler("19", CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN, pdu, sockfd, recvFrom);
-	return 0;
-}
-
-int humidity_handler(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom) {
-	handler("75%", CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN, pdu, sockfd, recvFrom);
-	return 0;
-}
 
 void test_make_resources() {
-        // Regular CoAP DISCOVERY
-	// Resource* discover = (Resource*) malloc(sizeof (Resource));
-	// discover->uri = "/.well-known/core";
-	// discover->callback = discover_handler;
-
-        // CoAP PUB/SUB DISCOVERY
+    // CoAP PUB/SUB DISCOVERY
 	Resource* discover = (Resource*) malloc(sizeof (Resource));
-	discover->uri = "/.well-known/core?rt=core.ps";
-	discover->callback = discover_handler;
-
+	discover->uri = "/.well-known/core"; //?rt=core.ps;rt=core.ps.discover";
+	discover->rt = "";
+	discover->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
+	discover->val = "";
+    
+    Resource* ps = (Resource*) malloc(sizeof (Resource));
+	ps->uri = "/ps/";
+	temperature->rt = "";
+	temperature->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
+	temperature->val = "";
+    
 	Resource* temperature = (Resource*) malloc(sizeof (Resource));
-	temperature->uri = "/temperature";
-	temperature->callback = temperature_handler;
+	temperature->uri = "/ps/temperature";
+	temperature->rt = "temperature";
+	temperature->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN;
+	temperature->val = "19";
 	
 	Resource* humidity = (Resource*) malloc(sizeof (Resource));
-	humidity->uri = "/humidity";
-	humidity->callback = humidity_handler;
+	humidity->uri = "/ps/humidity";
+	humidity->rt = "humidity";
+	humidity->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN;
+	humidity->val = "75%";
 	
-	discover->next = temperature;
+	discover->next = ps;
+	ps->children = temperature;
+	temperature->children = NULL;
+	humidity->children = NULL;
 	temperature->next = humidity;
-	humidity->next = 0;
+	ps->next = NULL;
 	head = discover;
 }
 
 // ============== /TEST ===============
 
+void handle_request(CoapPDU *recvPDU, int sockfd, struct sockaddr_storage* recvAddr) {
+	Resource* resource = find_resource(uri_buffer, head);
+	char* queries = strstr(uri_buffer, "?");
+    if (queries != NULL) {
+        queries++;
+    }
+    
+    handler(resource, queries, recvPDU, sockfd, &recvAddr);
+}
 
 int main(int argc, char **argv) {
     if (argc < 3)
@@ -190,37 +202,28 @@ int main(int argc, char **argv) {
     
     CoapPDU *recvPDU = new CoapPDU((uint8_t*)buffer, BUF_LEN, BUF_LEN);
     
-    for (;;) {
+    while (1) {
         ret = recvfrom(sockfd, &buffer, BUF_LEN, 0, (sockaddr*)&recvAddr, &recvAddrLen);
         if (ret == -1) {
             return -1;
         }
-		
-		printf("DEBUGGING: BEFORE ret > LEN\n");
         
         if(ret > BUF_LEN) {
             continue;
         }
-        
-		printf("DEBUGGING: BEFORE validate()\n");
         
         recvPDU->setPDULength(ret);
         if(recvPDU->validate() != 1) {
             continue;
         }
         
-		printf("DEBUGGING: BEFORE getURI()\n");
-        
         // depending on what this is, maybe call callback function
 		if(recvPDU->getURI(uri_buffer, URI_BUF_LEN, &recvURILen) != 0) {
 			continue;
 		}
 		
-		printf("DEBUGGING: recvURILen = %i\n", recvURILen);
-		
 		if(recvURILen > 0) {
-			Resource* r = find_resource(uri_buffer, head);
-			r->callback(recvPDU, sockfd, &recvAddr);
+			handle_request(uri_buffer, recvPDU, sockfd, &recvAddr);
 		}
 		
 		// code 0 indicates an empty message, send RST
