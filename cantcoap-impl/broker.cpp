@@ -12,6 +12,7 @@
 
 typedef int (*CoapHandler)(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom);
 
+// TODO: Add max-age
 typedef struct Resource {
     const char* uri;
     const char* rt;
@@ -30,7 +31,8 @@ Resource* find_resource(const char* uri, Resource* head) {
 			break;
 		node = node->next;
 	}
-	
+
+// TODO: remove strlen(node->uri), it's not needed, replace w "uri"	
 	if (node != NULL) {
 	    Resource* node2 = find_resource(uri + strlen(node->uri), node->children);
 	    node = node2 != NULL ? node2 : node;
@@ -46,7 +48,7 @@ Resource* find_resource(const char* uri, Resource* head) {
 }*/
 
 // General handler function
-int handler(Resource* resource, const char* queries CoapPDU *request, int sockfd, struct sockaddr_storage *recvFrom) {
+int handler(Resource* resource, const char* queries, CoapPDU *request, int sockfd, struct sockaddr_storage *recvFrom) {
     const char* payload = resource->val;
     int content_format = resource->ct;
 	socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
@@ -79,6 +81,7 @@ int handler(Resource* resource, const char* queries CoapPDU *request, int sockfd
 		*/
 	}
 
+// TODO IMPLEMENT NON-CONFIRMABLE
 	switch(request->getType()) {
 		case CoapPDU::COAP_CONFIRMABLE:
 			response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
@@ -155,7 +158,7 @@ void test_make_resources() {
 }
 
 // ============== /TEST ===============
-
+// TODO: Extract queries
 void handle_request(CoapPDU *recvPDU, int sockfd, struct sockaddr_storage* recvAddr) {
 	Resource* resource = find_resource(uri_buffer, head);
 	char* queries = strstr(uri_buffer, "?");
