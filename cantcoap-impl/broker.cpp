@@ -10,13 +10,15 @@
 #define BUF_LEN 512
 #define URI_BUF_LEN 32
 
+// TODO: Remove this typedef?
 typedef int (*CoapHandler)(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom);
 
 // TODO: Add max-age
 typedef struct Resource {
     const char* uri;
     const char* rt;
-    int ct;
+    CoapPDU::ContentFormat ct;
+// int ct;
     const char* val;
     Resource * children;
     Resource * next;
@@ -34,7 +36,7 @@ Resource* find_resource(const char* uri, Resource* head) {
 
 // TODO: remove strlen(node->uri), it's not needed, replace w "uri"	
 	if (node != NULL) {
-	    Resource* node2 = find_resource(uri + strlen(node->uri), node->children);
+	    Resource* node2 = find_resource(uri, node->children);
 	    node = node2 != NULL ? node2 : node;
     }
 	return node;
@@ -48,9 +50,10 @@ Resource* find_resource(const char* uri, Resource* head) {
 }*/
 
 // General handler function
-int handler(Resource* resource, const char* queries, CoapPDU *request, int sockfd, struct sockaddr_storage *recvFrom) {
+// int handler(Resource* resource, const char* queries, CoapPDU *request, int sockfd, struct sockaddr_storage recvFrom) {
+int handler(Resource* resource, CoapPDU *request, int sockfd, struct sockaddr_storage recvFrom) {
     const char* payload = resource->val;
-    int content_format = resource->ct;
+    CoapPDU::ContentFormat content_format = resource->ct;
 	socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
 	
 	CoapPDU *response = new CoapPDU();
@@ -104,7 +107,7 @@ int handler(Resource* resource, const char* queries, CoapPDU *request, int sockf
 		response->getPDUPointer(),
 		response->getPDULength(),
 		0,
-		(sockaddr*) recvFrom,
+		(struct sockaddr*) &recvFrom,
 		addrLen
 	);
     
@@ -125,16 +128,18 @@ int handler(Resource* resource, const char* queries, CoapPDU *request, int sockf
 void test_make_resources() {
     // CoAP PUB/SUB DISCOVERY
 	Resource* discover = (Resource*) malloc(sizeof (Resource));
-	discover->uri = "/.well-known/core"; //?rt=core.ps;rt=core.ps.discover";
+	// Value of Coap PUBSUB Discovery should answer "?rt=core.ps;"
+	discover->uri = "/.well-known/core?rt=core.ps"; //?rt=core.ps;rt=core.ps.discover;ct=40";
 	discover->rt = "";
 	discover->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
-	discover->val = "";
+	// TODO: Implement Coap NORMAL Discovery where all available resources at the broker are listed? 
+	discover->val = "</ps/>;rt=core.ps;ct=40";
     
     Resource* ps = (Resource*) malloc(sizeof (Resource));
 	ps->uri = "/ps/";
-	temperature->rt = "";
-	temperature->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
-	temperature->val = "";
+	ps->rt = "";
+	ps->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
+	ps->val = "";
     
 	Resource* temperature = (Resource*) malloc(sizeof (Resource));
 	temperature->uri = "/ps/temperature";
@@ -159,14 +164,15 @@ void test_make_resources() {
 
 // ============== /TEST ===============
 // TODO: Extract queries
-void handle_request(CoapPDU *recvPDU, int sockfd, struct sockaddr_storage* recvAddr) {
+void handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockaddr_storage recvAddr) {
 	Resource* resource = find_resource(uri_buffer, head);
-	char* queries = strstr(uri_buffer, "?");
+	const char* queries = strstr(uri_buffer, "?");
     if (queries != NULL) {
         queries++;
     }
     
-    handler(resource, queries, recvPDU, sockfd, &recvAddr);
+    // handler(resource, queries, &recvPDU, sockfd, &recvAddr);
+    handler(resource, recvPDU, sockfd, recvAddr);
 }
 
 int main(int argc, char **argv) {
@@ -226,7 +232,7 @@ int main(int argc, char **argv) {
 		}
 		
 		if(recvURILen > 0) {
-			handle_request(uri_buffer, recvPDU, sockfd, &recvAddr);
+			handle_request(uri_buffer, recvPDU, sockfd, recvAddr);
 		}
 		
 		// code 0 indicates an empty message, send RST
