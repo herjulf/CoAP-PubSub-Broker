@@ -5,10 +5,13 @@
 #include <sys/socket.h>
 #include <stdlib.h>
 #include <string.h>
+#include <cstring>
 #include <stdio.h>
+#include "yuarel.h"
 
 #define BUF_LEN 512
 #define URI_BUF_LEN 32
+#define QRY_NUM 6
 
 // TODO: Remove this typedef?
 typedef int (*CoapHandler)(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom);
@@ -166,16 +169,29 @@ void test_make_resources() {
 // TODO: Extract queries
 void handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockaddr_storage recvAddr) {
 	Resource* resource = find_resource(uri_buffer, head);
-	const char* queries = strstr(uri_buffer, "?");
+	char* queries = strstr(uri_buffer, "?");
     if (queries != NULL) {
         queries++;
     }
+    
+    struct yuarel_param params[QRY_NUM];
+    int q = yuarel_parse_query(queries, ';', params, QRY_NUM);
     
     // handler(resource, queries, &recvPDU, sockfd, &recvAddr);
     handler(resource, recvPDU, sockfd, recvAddr);
 }
 
 int main(int argc, char **argv) {
+    /*// >TESTING QUERIES LIBRARY>
+    struct yuarel_param params[QRY_NUM];
+    char queries[64];
+    std::strcpy(queries, "s=1;t=2;n=314");
+    int q = yuarel_parse_query(queries, ';', params, QRY_NUM);
+    printf("ret = %i\n", q);
+    printf("%s:%s\n", params[1].key, params[1].val);
+    return 0;
+    // </TESTING QUERIES LIBRARY>*/
+    
     if (argc < 3)
     {
         printf("USAGE: %s address port", argv[0]);
