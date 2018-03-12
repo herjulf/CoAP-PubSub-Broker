@@ -93,25 +93,32 @@ void find_resource_by_rt(const char* rt, Resource* head, struct Item<Resource*>*
 
 void find_resource_by_ct(int ct, Resource* head, struct Item<Resource*>* item, bool visited) {
     if (!visited) {
-	    if (head->children != NULL) {
-	        find_resource_by_ct(ct, head->children, item, visited);
-	    } else if (head->ct == ct) {
-	        struct Item<Resource*>* new_item = new struct Item<Resource*>();
-	        if (item != NULL) {
-	            item->next = new_item;
-	            new_item->next = NULL;
-	            item = new_item;
-	        } else {
-	            item = new struct Item<Resource*>();
-	            item->next = NULL;
-	        }  
+	if (head->children != NULL) {
+	    find_resource_by_ct(ct, head->children, item, visited);
+	} else if (head->ct == ct) {
+	    struct Item<Resource*>* new_item = new struct Item<Resource*>();
+
+	    new_item->val = head;
+	    new_item->next = NULL;
+	    if (item != NULL) {
+		new_item->next = item;
 	    }
-	
-	    if (head->next != NULL) {
-	        find_resource_by_ct(ct, head->next, item, visited);
-	    }
-	} else if (item != NULL) {
+	    item = new_item;
+	}
+
+	if (head->next != NULL) {
+	    find_resource_by_ct(ct, head->next, item, visited);
+	}
+
+    } else if (item != NULL) {
         struct Item<Resource*>* current = item;
+        
+        if (current->val->ct != ct) {
+            struct Item<Resource*>* tmp = current->next;
+            delete current;
+            current = tmp;
+        }
+        
         while (current->next) {
             if (current->next->val->ct != ct) {
                 struct Item<Resource*>* tmp = current->next->next;
