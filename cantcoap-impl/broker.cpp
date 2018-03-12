@@ -53,31 +53,35 @@ Resource* find_resource(const char* uri, Resource* head) {
 	return node;
 }
 
-template<typename T> 
-void find_resource_by_rt(const char* rt, Resource* head, struct Item<T>* item, bool visited) {
+void find_resource_by_rt(const char* rt, Resource* head, struct Item<Resource*>* &item, bool visited) {
     if (!visited) {
 	    if (head->children != NULL) {
 	        find_resource_by_rt(rt, head->children, item, visited);
 	    } else if (strcmp(head->rt, rt) == 0) {
-	        struct Item<T>* new_item = new struct Item<T>();
+	        struct Item<Resource*>* new_item = new struct Item<Resource*>();
+	        new_item->val = head;
+	        new_item->next = NULL;
 	        if (item != NULL) {
-	            item->next = new_item;
-	            new_item->next = NULL;
-	            item = new_item;
-	        } else {
-	            item = new struct Item<T>();
-	            item->next = NULL;
-	        }  
+	            new_item->next = item;
+	        }
+	        item = new_item;
 	    }
 	
 	    if (head->next != NULL) {
 	        find_resource_by_rt(rt, head->next, item, visited);
 	    }
     } else if (item != NULL) {
-        struct Item<T>* current = item;
+        struct Item<Resource*>* current = item;
+        
+        if (strcmp(current->val->rt, rt) != 0) {
+        	struct Item<Resource*>* tmp = current->next;
+            delete current;
+            current = tmp;
+        }
+        
         while (current->next) {
             if (strcmp(current->next->val->rt, rt) != 0) {
-                struct Item<T>* tmp = current->next->next;
+                struct Item<Resource*>* tmp = current->next->next;
                 delete current->next;
                 current->next = tmp;
             }
@@ -87,19 +91,18 @@ void find_resource_by_rt(const char* rt, Resource* head, struct Item<T>* item, b
     }
 }
 
-template<typename T> 
-void find_resource_by_ct(int ct, Resource* head, struct Item<T>* item, bool visited) {
+void find_resource_by_ct(int ct, Resource* head, struct Item<Resource*>* item, bool visited) {
     if (!visited) {
 	    if (head->children != NULL) {
 	        find_resource_by_ct(ct, head->children, item, visited);
 	    } else if (head->ct == ct) {
-	        struct Item<T>* new_item = new struct Item<T>();
+	        struct Item<Resource*>* new_item = new struct Item<Resource*>();
 	        if (item != NULL) {
 	            item->next = new_item;
 	            new_item->next = NULL;
 	            item = new_item;
 	        } else {
-	            item = new struct Item<T>();
+	            item = new struct Item<Resource*>();
 	            item->next = NULL;
 	        }  
 	    }
@@ -108,10 +111,10 @@ void find_resource_by_ct(int ct, Resource* head, struct Item<T>* item, bool visi
 	        find_resource_by_ct(ct, head->next, item, visited);
 	    }
 	} else if (item != NULL) {
-        struct Item<T>* current = item;
+        struct Item<Resource*>* current = item;
         while (current->next) {
             if (current->next->val->ct != ct) {
-                struct Item<T>* tmp = current->next->next;
+                struct Item<Resource*>* tmp = current->next->next;
                 delete current->next;
                 current->next = tmp;
             }
@@ -139,7 +142,7 @@ int handler(Resource* resource, struct yuarel_param* queries, int num_queries, C
 	
 	if (strcmp(resource->uri, PS_DISCOVERY) == 0) {
 	    payload = resource->val;
-	} else if (strstr(resource->uri, DISCOVERY) == DISCOVERY) {
+	} else if (strstr(resource->uri, DISCOVERY) != NULL) {
 	    // TODO
 	    payload = resource->val;
 	    
@@ -150,10 +153,10 @@ int handler(Resource* resource, struct yuarel_param* queries, int num_queries, C
         int i = 0;
         for (; i < num_queries; i++) {
             if (strcmp(queries[i].key, "rt") == 0) {
-                find_resource_by_rt<Resource*>(queries[i].val, head, item, visited);
+                find_resource_by_rt(queries[i].val, head, item, visited);
                 visited = true;
             } else if (strcmp(queries[i].key, "ct") == 0) {
-                find_resource_by_ct<Resource*>(std::strtol(queries[i].val,NULL,10), head, item, visited);
+                find_resource_by_ct(std::strtol(queries[i].val,NULL,10), head, item, visited);
                 visited = true;
             }
         }
@@ -235,7 +238,7 @@ void test_make_resources() {
 	ps_discover->uri = PS_DISCOVERY; //?rt=core.ps;rt=core.ps.discover;ct=40";
 	ps_discover->rt = "";
 	ps_discover->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
-	ps_discover->val = "</ps/>;rt=core.ps;ct=40";
+	ps_discover->val = "</ps/>;rt=core.ps;rt=core.ps.discover;ct=40";
     
 	Resource* discover = (Resource*) malloc(sizeof (Resource));
 	discover->uri = DISCOVERY;
@@ -274,6 +277,10 @@ void test_make_resources() {
 // TODO: Extract queries
 void handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockaddr_storage recvAddr) {
 	Resource* resource = find_resource(uri_buffer, head);
+	
+	if (resource == NULL)
+		return; // SEND RST, RETURN
+	
 	char* queries = strstr(uri_buffer, "?");
     if (queries != NULL) {
         queries++;
@@ -282,11 +289,7 @@ void handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct socka
     struct yuarel_param params[QRY_NUM];
     int q = yuarel_parse_query(queries, ';', params, QRY_NUM);
     
-    // handler(resource, queries, &recvPDU, sockfd, &recvAddr);
-    if (resource != NULL)
-        handler(resource, params, q, recvPDU, sockfd, recvAddr);
-    else
-        ; // Send RST?
+    handler(resource, params, q, recvPDU, sockfd, recvAddr);
 }
 
 int main(int argc, char **argv) {
