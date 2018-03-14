@@ -8,13 +8,24 @@
 #include <cstring>
 #include <cstdlib>
 #include <stdio.h>
+#include <sstream>
+#include <iostream>
 #include "yuarel.h"
 
 #define BUF_LEN 512
-#define URI_BUF_LEN 32
+#define URI_BUF_LEN 128
 #define QRY_NUM 6
 #define PS_DISCOVERY "/.well-known/core?rt=core.ps"
 #define DISCOVERY "/.well-known/core"
+
+/* TODO (Wrong replies)
+coap get coap://127.0.0.1:5683/.well-known/core/?ct=0;rt=temperature
+coap get coap://127.0.0.1:5683/.well-known/core/?rt="temperature";ct=1
+coap get coap://127.0.0.1:5683/.well-known/core/?rt="temperature";ct=0
+
+; and
+, or?
+*/
 
 // TODO: Remove this typedef?
 typedef int (*CoapHandler)(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom);
@@ -30,6 +41,7 @@ typedef struct Resource {
 } Resource;
 
 static Resource* head;
+static Resource* ps_discover;
 
 // Generic list
 template<typename T> 
@@ -91,24 +103,24 @@ void find_resource_by_rt(const char* rt, Resource* head, struct Item<Resource*>*
     }
 }
 
-void find_resource_by_ct(int ct, Resource* head, struct Item<Resource*>* item, bool visited) {
+void find_resource_by_ct(int ct, Resource* head, struct Item<Resource*>* &item, bool visited) {
     if (!visited) {
-	if (head->children != NULL) {
-	    find_resource_by_ct(ct, head->children, item, visited);
-	} else if (head->ct == ct) {
-	    struct Item<Resource*>* new_item = new struct Item<Resource*>();
+		if (head->children != NULL) {
+			find_resource_by_ct(ct, head->children, item, visited);
+		} else if (head->ct == ct) {
+			struct Item<Resource*>* new_item = new struct Item<Resource*>();
 
-	    new_item->val = head;
-	    new_item->next = NULL;
-	    if (item != NULL) {
-		new_item->next = item;
-	    }
-	    item = new_item;
-	}
+			new_item->val = head;
+			new_item->next = NULL;
+			if (item != NULL) {
+				new_item->next = item;
+			}
+			item = new_item;
+		}
 
-	if (head->next != NULL) {
-	    find_resource_by_ct(ct, head->next, item, visited);
-	}
+		if (head->next != NULL) {
+			find_resource_by_ct(ct, head->next, item, visited);
+		}
 
     } else if (item != NULL) {
         struct Item<Resource*>* current = item;
@@ -144,16 +156,14 @@ struct yuarel_param* find_query(struct yuarel_param* params, char* key) {
 // General handler function
 int handler(Resource* resource, struct yuarel_param* queries, int num_queries, CoapPDU *request, int sockfd, struct sockaddr_storage recvFrom) {
     const char* payload = NULL;
+    std::string payload_str;
     CoapPDU::ContentFormat content_format = resource->ct;
 	socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
 	
 	if (strcmp(resource->uri, PS_DISCOVERY) == 0) {
 	    payload = resource->val;
 	} else if (strstr(resource->uri, DISCOVERY) != NULL) {
-	    // TODO
-	    payload = resource->val;
-	    
-	    // DO NOT REMOVE; WILL FIX SOON
+		std::stringstream* val = new std::stringstream();
 	    struct yuarel_param* query = queries;
         struct Item<Resource*>* item = NULL;
         bool visited = false;
@@ -167,6 +177,21 @@ int handler(Resource* resource, struct yuarel_param* queries, int num_queries, C
                 visited = true;
             }
         }
+        
+        struct Item<Resource*>* current = item;
+        while(current) {
+        	*val << "<" << current->val->uri << ">;rt=\"" 
+        		<< current->val->rt << "\";ct=" << current->val->ct;
+        	current = current->next;
+        	
+        	if (current) {
+        		*val << ",";
+        	}
+        }
+        
+        payload_str = val->str();
+        payload = payload_str.c_str();
+        delete val;
 	} else {
 	    payload = resource->val;
 	}
@@ -241,7 +266,7 @@ int handler(Resource* resource, struct yuarel_param* queries, int num_queries, C
 // QUESTION: Citation marks around rt or not? Compare with Herjulf impl coap.c
 
 void test_make_resources() {
-	Resource* ps_discover = (Resource*) malloc(sizeof (Resource));
+	ps_discover = (Resource*) malloc(sizeof (Resource));
 	ps_discover->uri = PS_DISCOVERY; //?rt=core.ps;rt=core.ps.discover;ct=40";
 	ps_discover->rt = "";
 	ps_discover->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
@@ -283,7 +308,12 @@ void test_make_resources() {
 // ============== /TEST ===============
 // TODO: Extract queries
 void handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockaddr_storage recvAddr) {
-	Resource* resource = find_resource(uri_buffer, head);
+	Resource* resource = NULL;
+	if (strcmp(uri_buffer, PS_DISCOVERY) == 0) {
+		resource = ps_discover;
+	} else {
+		resource = find_resource(uri_buffer, head);
+	}
 	
 	if (resource == NULL)
 		return; // SEND RST, RETURN
