@@ -19,9 +19,9 @@
 #define DISCOVERY "/.well-known/core"
 
 /* TODO (Wrong replies)
-coap get coap://127.0.0.1:5683/.well-known/core/?ct=0;rt=temperature
-coap get coap://127.0.0.1:5683/.well-known/core/?rt="temperature";ct=1
-coap get coap://127.0.0.1:5683/.well-known/core/?rt="temperature";ct=0
+coap get "coap://127.0.0.1:5683/.well-known/core/?ct=0&rt=temperature"
+coap get "coap://127.0.0.1:5683/.well-known/core/?rt=temperature&ct=1"
+coap get "coap://127.0.0.1:5683/.well-known/core/?rt=temperature&ct=0"
 
 ; and
 , or?
@@ -84,21 +84,21 @@ void find_resource_by_rt(const char* rt, Resource* head, struct Item<Resource*>*
 	    }
     } else if (item != NULL) {
         struct Item<Resource*>* current = item;
+        bool is_head = true;
         
-        if (strcmp(current->val->rt, rt) != 0) {
-        	struct Item<Resource*>* tmp = current->next;
-            delete current;
-            current = tmp;
-        }
-        
-        while (current->next) {
-            if (strcmp(current->next->val->rt, rt) != 0) {
-                struct Item<Resource*>* tmp = current->next->next;
-                delete current->next;
-                current->next = tmp;
-            }
+        while (current) {
+            if (strcmp(current->val->rt, rt) != 0) {
+                struct Item<Resource*>* tmp = current->next;
+                delete current;
+                current = tmp;
                 
-            current = current->next;
+                if (is_head) {
+                    item = current;
+                    is_head = false;
+                }
+            } else {
+                current = current->next;
+            }
         }
     }
 }
@@ -113,7 +113,7 @@ void find_resource_by_ct(int ct, Resource* head, struct Item<Resource*>* &item, 
 			new_item->val = head;
 			new_item->next = NULL;
 			if (item != NULL) {
-				new_item->next = item;
+				new_item->next = item; 
 			}
 			item = new_item;
 		}
@@ -124,21 +124,21 @@ void find_resource_by_ct(int ct, Resource* head, struct Item<Resource*>* &item, 
 
     } else if (item != NULL) {
         struct Item<Resource*>* current = item;
+        bool is_head = true;
         
-        if (current->val->ct != ct) {
-            struct Item<Resource*>* tmp = current->next;
-            delete current;
-            current = tmp;
-        }
-        
-        while (current->next) {
-            if (current->next->val->ct != ct) {
-                struct Item<Resource*>* tmp = current->next->next;
-                delete current->next;
-                current->next = tmp;
-            }
+        while (current) {
+            if (current->val->ct != ct) {
+                struct Item<Resource*>* tmp = current->next;
+                delete current;
+                current = tmp;
                 
-            current = current->next;
+                if (is_head) {
+                    item = current;
+                    is_head = false;
+                }
+            } else {
+                current = current->next;
+            }
         }
     }
 }
@@ -168,6 +168,7 @@ int handler(Resource* resource, struct yuarel_param* queries, int num_queries, C
         struct Item<Resource*>* item = NULL;
         bool visited = false;
         int i = 0;
+        
         for (; i < num_queries; i++) {
             if (strcmp(queries[i].key, "rt") == 0) {
                 find_resource_by_rt(queries[i].val, head, item, visited);
@@ -179,7 +180,7 @@ int handler(Resource* resource, struct yuarel_param* queries, int num_queries, C
         }
         
         struct Item<Resource*>* current = item;
-        while(current) {
+        while(current) {  //printf("HEAD HEAD HEAD %i\n", current);
         	*val << "<" << current->val->uri << ">;rt=\"" 
         		<< current->val->rt << "\";ct=" << current->val->ct;
         	current = current->next;
@@ -189,7 +190,7 @@ int handler(Resource* resource, struct yuarel_param* queries, int num_queries, C
         	}
         }
         
-        payload_str = val->str();
+        payload_str = val->str(); 
         payload = payload_str.c_str();
         delete val;
 	} else {
@@ -271,38 +272,46 @@ void test_make_resources() {
 	ps_discover->rt = "";
 	ps_discover->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
 	ps_discover->val = "</ps/>;rt=core.ps;rt=core.ps.discover;ct=40";
+	ps_discover->next = NULL;
+	ps_discover->children = NULL;
     
 	Resource* discover = (Resource*) malloc(sizeof (Resource));
 	discover->uri = DISCOVERY;
 	discover->rt = "";
 	discover->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
 	discover->val = "</temperature>;</humidity>"; // TODO
+	discover->next= NULL;
+	discover->children = NULL;
     
     Resource* ps = (Resource*) malloc(sizeof (Resource));
 	ps->uri = "/ps/";
 	ps->rt = "";
 	ps->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
 	ps->val = "";
+	ps->next= NULL;
+	ps->children = NULL;
     
 	Resource* temperature = (Resource*) malloc(sizeof (Resource));
 	temperature->uri = "/ps/temperature";
 	temperature->rt = "temperature";
 	temperature->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN;
 	temperature->val = "19";
+	temperature->next= NULL;
+	temperature->children = NULL;
 	
 	Resource* humidity = (Resource*) malloc(sizeof (Resource));
 	humidity->uri = "/ps/humidity";
 	humidity->rt = "humidity";
 	humidity->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN;
 	humidity->val = "75%";
+	humidity->next= NULL;
+	humidity->children = NULL;
 	
+	ps_discover->next = discover;
 	discover->next = ps;
 	ps->children = temperature;
-	temperature->children = NULL;
-	humidity->children = NULL;
 	temperature->next = humidity;
-	ps->next = NULL;
-	head = discover;
+	head = ps_discover;
 }
 
 // ============== /TEST ===============
@@ -324,22 +333,12 @@ void handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct socka
     }
     
     struct yuarel_param params[QRY_NUM];
-    int q = yuarel_parse_query(queries, ';', params, QRY_NUM);
+    int q = yuarel_parse_query(queries, '&', params, QRY_NUM);
     
     handler(resource, params, q, recvPDU, sockfd, recvAddr);
 }
 
 int main(int argc, char **argv) {
-    /*// >TESTING QUERIES LIBRARY>
-    struct yuarel_param params[QRY_NUM];
-    char queries[64];
-    std::strcpy(queries, "s=1;t=2;n=314");
-    int q = yuarel_parse_query(queries, ';', params, QRY_NUM);
-    printf("ret = %i\n", q);
-    printf("%s:%s\n", params[1].key, params[1].val);
-    return 0;
-    // </TESTING QUERIES LIBRARY>*/
-    
     if (argc < 3)
     {
         printf("USAGE: %s address port", argv[0]);
@@ -394,6 +393,8 @@ int main(int argc, char **argv) {
 		if(recvPDU->getURI(uri_buffer, URI_BUF_LEN, &recvURILen) != 0) {
 			continue;
 		}
+		
+		// uri_buffer[recvURILen] = '\0';
 		
 		if(recvURILen > 0) {
 			handle_request(uri_buffer, recvPDU, sockfd, recvAddr);

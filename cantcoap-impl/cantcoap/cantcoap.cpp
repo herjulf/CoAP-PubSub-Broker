@@ -595,7 +595,7 @@ int CoapPDU::getURI(char *dst, int dstlen, int *outLen) {
 
 	char separator = '/';
 	int firstQuery = 1;
-
+    
 	for(int i=0; i<_numOptions; i++) {
 		o = &options[i];
 		oLen = o->optionValueLength;
