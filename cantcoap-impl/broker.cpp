@@ -18,17 +18,11 @@
 #define PS_DISCOVERY "/.well-known/core?rt=core.ps"
 #define DISCOVERY "/.well-known/core"
 
-/* TODO (Wrong replies)
+/* Testing
 coap get "coap://127.0.0.1:5683/.well-known/core/?ct=0&rt=temperature"
 coap get "coap://127.0.0.1:5683/.well-known/core/?rt=temperature&ct=1"
 coap get "coap://127.0.0.1:5683/.well-known/core/?rt=temperature&ct=0"
-
-; and
-, or?
 */
-
-// TODO: Remove this typedef?
-typedef int (*CoapHandler)(CoapPDU *pdu, int sockfd, struct sockaddr_storage *recvFrom);
 
 // TODO: Add max-age
 typedef struct Resource {
@@ -49,6 +43,21 @@ struct Item {
     T val;
     struct Item<T>* next;
 };
+
+void get_all_resources(struct Item<Resource*>* &item, Resource* head) {
+	if (head->children != NULL) {
+		get_all_resources(item, head->children);
+	} else {
+		struct Item<Resource*>* new_item = new struct Item<Resource*>();
+		new_item->val = head;
+		new_item->next = item;
+		item = new_item;
+	}
+
+	if (head->next != NULL) {
+		get_all_resources(item, head->next);
+	}
+}
 
 Resource* find_resource(const char* uri, Resource* head) {
 	Resource* node = head;
@@ -196,14 +205,17 @@ int handler(Resource* resource, struct yuarel_param* queries, int num_queries, C
         while(current) {
         	*val << "<" << current->val->uri << ">;rt=\"" 
         		<< current->val->rt << "\";ct=" << current->val->ct;
-        	current = current->next;
+        		
+        	struct Item<Resource*>* tmp = current->next;
+        	delete current;
+        	current = tmp;
         	
         	if (current) {
         		*val << ",";
         	}
         }
         
-        if (num_queries >= 0) {
+        if (num_queries > 0) {
         	payload_str = val->str();
         	payload = payload_str.c_str();
        	} else {
@@ -297,7 +309,7 @@ void test_make_resources() {
 	discover->uri = DISCOVERY;
 	discover->rt = "";
 	discover->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
-	discover->val = "</temperature>;</humidity>"; // TODO
+	discover->val="";
 	discover->next= NULL;
 	discover->children = NULL;
     
@@ -330,6 +342,25 @@ void test_make_resources() {
 	ps->children = temperature;
 	temperature->next = humidity;
 	head = ps_discover;
+	
+	// TODO Do not include regular and ps discover in discover response
+	struct Item<Resource*>* current = NULL;
+	get_all_resources(current, head);
+	std::stringstream val("");
+    while(current) {
+    	val << "<" << current->val->uri << ">;rt=\"" 
+    		<< current->val->rt << "\";ct=" << current->val->ct;
+    		
+    	struct Item<Resource*>* tmp = current->next;
+    	delete current;
+    	current = tmp;
+    	
+    	if (current) {
+    		val << ",";
+    	}
+    }
+    
+    discover->val = val.str().c_str();
 }
 
 // ============== /TEST ===============
@@ -356,10 +387,10 @@ void handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct socka
     handler(resource, params, q, recvPDU, sockfd, recvAddr);
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv) { 
     if (argc < 3)
     {
-        printf("USAGE: %s address port", argv[0]);
+        printf("USAGE: %s address port\n", argv[0]);
         return -1;
     }
     
