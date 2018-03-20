@@ -177,16 +177,20 @@ struct yuarel_param* find_query(struct yuarel_param* params, char* key) {
 }
 
 // General handler function
-int handler(Resource* resource, struct yuarel_param* queries, int num_queries, CoapPDU *request, int sockfd, struct sockaddr_storage recvFrom) {
-    const char* payload = NULL;
+void get_handler(Resource* resource, std::stringstream* &payload, struct yuarel_param* queries, int num_queries) {
+    payload = NULL;
     std::string payload_str;
-    CoapPDU::ContentFormat content_format = resource->ct;
-	socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
+    std::stringstream* val = new std::stringstream();
 	
 	if (strcmp(resource->uri, PS_DISCOVERY) == 0) {
-	    payload = resource->val;
+	    *val << resource->val;
 	} else if (strstr(resource->uri, DISCOVERY) != NULL) {
-		std::stringstream* val = new std::stringstream();
+		if (num_queries < 1) {
+			*val << resource->val;
+			payload = val;
+			return;
+		}
+		
 	    struct yuarel_param* query = queries;
         struct Item<Resource*>* item = NULL;
         bool visited = false;
@@ -214,81 +218,13 @@ int handler(Resource* resource, struct yuarel_param* queries, int num_queries, C
         		*val << ",";
         	}
         }
-        
-        if (num_queries > 0) {
-        	payload_str = val->str();
-        	payload = payload_str.c_str();
-       	} else {
-       		payload = resource->val;
-       	}
        	
-        delete val;
+        //delete val;
 	} else {
-	    payload = resource->val;
+	    *val << resource->val;
 	}
 	
-	CoapPDU *response = new CoapPDU();
-	response->setVersion(1);
-	response->setMessageID(request->getMessageID()); // OBS
-	response->setToken(request->getTokenPointer(), request->getTokenLength());
-
-	switch(request->getCode()) {
-		case CoapPDU::COAP_EMPTY: // send RST
-			break;
-		case CoapPDU::COAP_GET:
-			response->setCode(CoapPDU::COAP_CONTENT);
-			response->setContentFormat(content_format);
-			response->setPayload((uint8_t*)payload, strlen(payload));
-			break;
-		/* TODO
-		case CoapPDU::COAP_POST:
-			response->setCode(CoapPDU::COAP_CREATED);
-			break;
-		case CoapPDU::COAP_PUT:
-			response->setCode(CoapPDU::COAP_CHANGED);
-			break;
-		case CoapPDU::COAP_DELETE:
-			response->setCode(CoapPDU::COAP_DELETED);
-			// length 9 or 10 (including null)?
-			response->setPayload((uint8_t*) "DELETE OK", 9);
-			break;
-		*/
-	}
-
-// TODO IMPLEMENT NON-CONFIRMABLE
-	switch(request->getType()) {
-		case CoapPDU::COAP_CONFIRMABLE:
-			response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
-			break;
-		/* TODO
-		case CoapPDU::COAP_NON_CONFIRMABLE:
-			// fel: response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
-			break;
-		case CoapPDU::COAP_ACKNOWLEDGEMENT:
-			break;
-		case CoapPDU::COAP_RESET:
-			break;
-		default:
-			return 1;
-	*/
-	};
-
-	ssize_t sent = sendto(
-		sockfd,
-		response->getPDUPointer(),
-		response->getPDULength(),
-		0,
-		(struct sockaddr*) &recvFrom,
-		addrLen
-	);
-    
-    delete response;
-    
-	if(sent < 0) {
-		return 1;
-	}
-	
-	return 0;
+	payload = val;
 }
 
 // =============== TEST ===============
@@ -365,7 +301,7 @@ void test_make_resources() {
 
 // ============== /TEST ===============
 // TODO: Extract queries
-void handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockaddr_storage recvAddr) {
+int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockaddr_storage recvAddr) {
 	Resource* resource = NULL;
 	if (strcmp(uri_buffer, PS_DISCOVERY) == 0) {
 		resource = ps_discover;
@@ -374,7 +310,7 @@ void handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct socka
 	}
 	
 	if (resource == NULL)
-		return; // SEND RST, RETURN
+		return 1; // SEND RST, RETURN
 	
 	char* queries = strstr(uri_buffer, "?");
     if (queries != NULL) {
@@ -384,7 +320,77 @@ void handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct socka
     struct yuarel_param params[QRY_NUM];
     int q = yuarel_parse_query(queries, '&', params, QRY_NUM);
     
-    handler(resource, params, q, recvPDU, sockfd, recvAddr);
+    CoapPDU::ContentFormat content_format = resource->ct;
+	socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
+	
+	CoapPDU *response = new CoapPDU();
+	response->setVersion(1);
+	response->setMessageID(recvPDU->getMessageID()); // OBS
+	response->setToken(recvPDU->getTokenPointer(), recvPDU->getTokenLength());
+	
+    switch(recvPDU->getCode()) {
+		case CoapPDU::COAP_EMPTY: // send RST
+			break;
+		case CoapPDU::COAP_GET:
+			std::stringstream* payload_stream = NULL;
+			get_handler(resource, payload_stream, params, q);
+			std::string payload_str = payload_stream->str();
+			delete payload_stream;
+			char payload[payload_str.length()];
+			std::strcpy(payload, payload_str.c_str());
+			response->setCode(CoapPDU::COAP_CONTENT);
+			response->setContentFormat(content_format);
+			response->setPayload((uint8_t*)payload, strlen(payload));
+			break;
+		/* TODO
+		case CoapPDU::COAP_POST:
+			response->setCode(CoapPDU::COAP_CREATED);
+			break;
+		case CoapPDU::COAP_PUT:
+			response->setCode(CoapPDU::COAP_CHANGED);
+			break;
+		case CoapPDU::COAP_DELETE:
+			response->setCode(CoapPDU::COAP_DELETED);
+			// length 9 or 10 (including null)?
+			response->setPayload((uint8_t*) "DELETE OK", 9);
+			break;
+		*/
+	}
+
+// TODO IMPLEMENT NON-CONFIRMABLE
+	switch(recvPDU->getType()) {
+		case CoapPDU::COAP_CONFIRMABLE:
+			response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
+			break;
+		/* TODO
+		case CoapPDU::COAP_NON_CONFIRMABLE:
+			// fel: response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
+			break;
+		case CoapPDU::COAP_ACKNOWLEDGEMENT:
+			break;
+		case CoapPDU::COAP_RESET:
+			break;
+		default:
+			return 1;
+	*/
+	};
+
+	ssize_t sent = sendto(
+		sockfd,
+		response->getPDUPointer(),
+		response->getPDULength(),
+		0,
+		(struct sockaddr*) &recvAddr,
+		addrLen
+	);
+    
+    delete response;
+    
+	if(sent < 0) {
+		return 1;
+	}
+	
+	return 0;
 }
 
 int main(int argc, char **argv) { 
