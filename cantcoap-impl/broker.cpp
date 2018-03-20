@@ -85,6 +85,7 @@ void find_resource_by_rt(const char* rt, Resource* head, struct Item<Resource*>*
     } else if (item != NULL) {
         struct Item<Resource*>* current = item;
         bool is_head = true;
+        bool head_removed = false;
         
         while (current) {
             if (strcmp(current->val->rt, rt) != 0) {
@@ -94,10 +95,16 @@ void find_resource_by_rt(const char* rt, Resource* head, struct Item<Resource*>*
                 
                 if (is_head) {
                     item = current;
-                    is_head = false;
+                	head_removed = true;
                 }
             } else {
                 current = current->next;
+            }
+            
+            if (head_removed) {
+            	head_removed = false;
+            } else if (is_head) {
+            	is_head = false;
             }
         }
     }
@@ -125,6 +132,7 @@ void find_resource_by_ct(int ct, Resource* head, struct Item<Resource*>* &item, 
     } else if (item != NULL) {
         struct Item<Resource*>* current = item;
         bool is_head = true;
+        bool head_removed = false;
         
         while (current) {
             if (current->val->ct != ct) {
@@ -134,10 +142,16 @@ void find_resource_by_ct(int ct, Resource* head, struct Item<Resource*>* &item, 
                 
                 if (is_head) {
                     item = current;
-                    is_head = false;
+                	head_removed = true;
                 }
             } else {
                 current = current->next;
+            }
+            
+            if (head_removed) {
+            	head_removed = false;
+            } else if (is_head) {
+            	is_head = false;
             }
         }
     }
@@ -167,9 +181,8 @@ int handler(Resource* resource, struct yuarel_param* queries, int num_queries, C
 	    struct yuarel_param* query = queries;
         struct Item<Resource*>* item = NULL;
         bool visited = false;
-        int i = 0;
         
-        for (; i < num_queries; i++) {
+        for (int i = 0; i < num_queries; i++) {
             if (strcmp(queries[i].key, "rt") == 0) {
                 find_resource_by_rt(queries[i].val, head, item, visited);
                 visited = true;
@@ -180,7 +193,7 @@ int handler(Resource* resource, struct yuarel_param* queries, int num_queries, C
         }
         
         struct Item<Resource*>* current = item;
-        while(current) {  //printf("HEAD HEAD HEAD %i\n", current);
+        while(current) {
         	*val << "<" << current->val->uri << ">;rt=\"" 
         		<< current->val->rt << "\";ct=" << current->val->ct;
         	current = current->next;
@@ -190,8 +203,13 @@ int handler(Resource* resource, struct yuarel_param* queries, int num_queries, C
         	}
         }
         
-        payload_str = val->str(); 
-        payload = payload_str.c_str();
+        if (num_queries >= 0) {
+        	payload_str = val->str();
+        	payload = payload_str.c_str();
+       	} else {
+       		payload = resource->val;
+       	}
+       	
         delete val;
 	} else {
 	    payload = resource->val;
