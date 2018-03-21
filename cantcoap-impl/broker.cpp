@@ -206,6 +206,7 @@ void get_handler(Resource* resource, std::stringstream* &payload, struct yuarel_
 	    *val << resource->val;
 	} else if (strstr(resource->uri, DISCOVERY) != NULL) {
 		if (num_queries < 1) {
+		    update_discovery(discover);
 			*val << resource->val;
 			payload = val;
 			return;
@@ -260,16 +261,17 @@ void post_handler(Resource* resource, const char* in, char* &payload, struct yua
     if (p != NULL)
         yuarel_parse_query(p+1, ';', params, OPT_NUM);  // TODO, fix options
 	
-	char resource_name[end-start];
-	memcpy(resource_name, in + 1, end-start-1);
-	resource_name[end-start-1] = '\0';
-	*payload_stream << resource->uri << '/' << resource_name;
-	std::string payload_str = payload_stream->str();
-	delete payload_stream;
-	payload = (char*) malloc(payload_str.length());
-	std::strcpy(payload, payload_str.c_str());
+	int uri_len = strlen(resource->uri);
+	int len = end-start+uri_len+1;
+	char* resource_uri = (char*) malloc(len);
+	memcpy(resource_uri, resource->uri, uri_len);
+	resource_uri[uri_len] = '/';
+	memcpy(resource_uri + uri_len + 1, in + 1, end-start-1);
+	resource_uri[len-1] = '\0';
+	payload = resource_uri;
 	
 	Resource* new_resource = (Resource*) malloc(sizeof (Resource));
+	new_resource->uri = resource_uri;
 	new_resource->rt = "";  // TODO Options (Both)
 	new_resource->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN; 
 	new_resource->val = "val_hard";
