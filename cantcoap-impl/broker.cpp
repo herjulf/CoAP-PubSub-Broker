@@ -19,10 +19,14 @@
 #define DISCOVERY "/.well-known/core"
 
 /* Testing
-coap get "coap://127.0.0.1:5683/.well-known/core/?ct=0&rt=temperature"
-coap get "coap://127.0.0.1:5683/.well-known/core/?rt=temperature&ct=1"
-coap get "coap://127.0.0.1:5683/.well-known/core/?rt=temperature&ct=0"
+coap get "coap://127.0.0.1:5683/.well-known/core?ct=0&rt=temperature"
+coap get "coap://127.0.0.1:5683/.well-known/core?rt=temperature&ct=1"
+coap get "coap://127.0.0.1:5683/.well-known/core?rt=temperature&ct=0"
+echo "<topic1>" | coap post "coap://127.0.0.1:5683/ps"
+coap get "coap://127.0.0.1:5683/.well-known/core"
 */
+
+// TODO forbid ps(LINK)->topic1(TEXT)->topic2(TEXT)
 
 // TODO: Add max-age
 // IMPORTANT: All uri should be dynamically allocated
@@ -195,7 +199,10 @@ void update_discovery(Resource* discover) {
     	}
     }
     
-    discover->val = val.str().c_str();
+    std::string s = val.str();
+    char* d = (char*) malloc(s.length());
+    std::memcpy(d, s.c_str(), s.length());
+    discover->val = d;
 }
 
 void get_handler(Resource* resource, std::stringstream* &payload, struct yuarel_param* queries, int num_queries) {
@@ -249,7 +256,7 @@ void get_handler(Resource* resource, std::stringstream* &payload, struct yuarel_
 }
 
 // TODO This only implements CREATE
-void post_handler(Resource* resource, const char* in, char* &payload, struct yuarel_param* queries, int num_queries) {
+Resource* post_handler(Resource* resource, const char* in, char* &payload, struct yuarel_param* queries, int num_queries) {
     std::stringstream* payload_stream = new std::stringstream();
     char * p = strchr(in, '<');
     int start = (int)(p-in);
@@ -266,7 +273,7 @@ void post_handler(Resource* resource, const char* in, char* &payload, struct yua
 	char* resource_uri = (char*) malloc(len);
 	memcpy(resource_uri, resource->uri, uri_len);
 	resource_uri[uri_len] = '/';
-	memcpy(resource_uri + uri_len + 1, in + 1, end-start-1);
+	memcpy(resource_uri + uri_len + 1, in + start + 1, end-start-1);
 	resource_uri[len-1] = '\0';
 	payload = resource_uri;
 	
@@ -279,7 +286,8 @@ void post_handler(Resource* resource, const char* in, char* &payload, struct yua
     resource->children = new_resource;
 	new_resource->children = NULL;
 	
-	update_discovery(discover);
+	update_discovery(discover); // TODO Behöver vi det?
+	return new_resource;
 }
 
 // =============== TEST ===============
@@ -357,8 +365,6 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
     
     struct yuarel_param params[OPT_NUM];
     int q = yuarel_parse_query(queries, '&', params, OPT_NUM);
-    
-    CoapPDU::ContentFormat content_format = resource->ct;   // TODO Why?
 	socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
 	
 	CoapPDU *response = new CoapPDU();
@@ -378,7 +384,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
 			char payload[payload_str.length()];
 			std::strcpy(payload, payload_str.c_str());
 			response->setCode(CoapPDU::COAP_CONTENT);
-			response->setContentFormat(content_format);
+			response->setContentFormat(resource->ct);
 			response->setPayload((uint8_t*)payload, strlen(payload));
 			break;
 		}
@@ -386,6 +392,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
 			char* payload = NULL;
 			post_handler(resource, (const char*)recvPDU->getPayloadPointer(), payload, params, q);
 			response->setCode(CoapPDU::COAP_CREATED);
+			response->setContentFormat(resource->ct);
 			response->setPayload((uint8_t*)payload, strlen(payload));
 			break;
 		}
