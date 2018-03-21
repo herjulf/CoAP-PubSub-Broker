@@ -14,7 +14,7 @@
 
 #define BUF_LEN 512
 #define URI_BUF_LEN 128
-#define QRY_NUM 6
+#define OPT_NUM 6
 #define PS_DISCOVERY "/.well-known/core?rt=core.ps"
 #define DISCOVERY "/.well-known/core"
 
@@ -25,6 +25,7 @@ coap get "coap://127.0.0.1:5683/.well-known/core/?rt=temperature&ct=0"
 */
 
 // TODO: Add max-age
+// IMPORTANT: All uri should be dynamically allocated
 typedef struct Resource {
     const char* uri;
     const char* rt;
@@ -36,6 +37,7 @@ typedef struct Resource {
 
 static Resource* head;
 static Resource* ps_discover;
+static Resource* discover;
 
 // Generic list
 template<typename T> 
@@ -176,10 +178,28 @@ struct yuarel_param* find_query(struct yuarel_param* params, char* key) {
     return NULL;
 }
 
-// General handler function
+void update_discovery(Resource* discover) {
+    // TODO Do not include regular and ps discover in discover response
+	struct Item<Resource*>* current = NULL;
+	get_all_resources(current, head);
+	std::stringstream val("");
+    while(current) {
+    	val << "<" << current->val->uri << ">;rt=\"" 
+    		<< current->val->rt << "\";ct=" << current->val->ct;
+    		
+    	struct Item<Resource*>* tmp = current->next;
+    	current = tmp;
+    	
+    	if (current) {
+    		val << ",";
+    	}
+    }
+    
+    discover->val = val.str().c_str();
+}
+
 void get_handler(Resource* resource, std::stringstream* &payload, struct yuarel_param* queries, int num_queries) {
     payload = NULL;
-    std::string payload_str;
     std::stringstream* val = new std::stringstream();
 	
 	if (strcmp(resource->uri, PS_DISCOVERY) == 0) {
@@ -227,6 +247,39 @@ void get_handler(Resource* resource, std::stringstream* &payload, struct yuarel_
 	payload = val;
 }
 
+// TODO This only implements CREATE
+void post_handler(Resource* resource, const char* in, char* &payload, struct yuarel_param* queries, int num_queries) {
+    std::stringstream* payload_stream = new std::stringstream();
+    char * p = strchr(in, '<');
+    int start = (int)(p-in);
+    p = strchr(in, '>');
+    int end = (int)(p-in);
+    p = strchr(in, ';');
+	struct yuarel_param params[OPT_NUM];
+    int q = -1;
+    if (p != NULL)
+        yuarel_parse_query(p+1, ';', params, OPT_NUM);  // TODO, fix options
+	
+	char resource_name[end-start];
+	memcpy(resource_name, in + 1, end-start-1);
+	resource_name[end-start-1] = '\0';
+	*payload_stream << resource->uri << '/' << resource_name;
+	std::string payload_str = payload_stream->str();
+	delete payload_stream;
+	payload = (char*) malloc(payload_str.length());
+	std::strcpy(payload, payload_str.c_str());
+	
+	Resource* new_resource = (Resource*) malloc(sizeof (Resource));
+	new_resource->rt = "";  // TODO Options (Both)
+	new_resource->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN; 
+	new_resource->val = "val_hard";
+    new_resource->next = resource->children;
+    resource->children = new_resource;
+	new_resource->children = NULL;
+	
+	update_discovery(discover);
+}
+
 // =============== TEST ===============
 
 // CoAP PUBSUB Discovery
@@ -241,7 +294,7 @@ void test_make_resources() {
 	ps_discover->next = NULL;
 	ps_discover->children = NULL;
     
-	Resource* discover = (Resource*) malloc(sizeof (Resource));
+	discover = (Resource*) malloc(sizeof (Resource));
 	discover->uri = DISCOVERY;
 	discover->rt = "";
 	discover->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
@@ -250,7 +303,7 @@ void test_make_resources() {
 	discover->children = NULL;
     
     Resource* ps = (Resource*) malloc(sizeof (Resource));
-	ps->uri = "/ps/";
+	ps->uri = "/ps";
 	ps->rt = "";
 	ps->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
 	ps->val = "";
@@ -279,24 +332,7 @@ void test_make_resources() {
 	temperature->next = humidity;
 	head = ps_discover;
 	
-	// TODO Do not include regular and ps discover in discover response
-	struct Item<Resource*>* current = NULL;
-	get_all_resources(current, head);
-	std::stringstream val("");
-    while(current) {
-    	val << "<" << current->val->uri << ">;rt=\"" 
-    		<< current->val->rt << "\";ct=" << current->val->ct;
-    		
-    	struct Item<Resource*>* tmp = current->next;
-    	delete current;
-    	current = tmp;
-    	
-    	if (current) {
-    		val << ",";
-    	}
-    }
-    
-    discover->val = val.str().c_str();
+    update_discovery(discover);
 }
 
 // ============== /TEST ===============
@@ -309,7 +345,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
 		resource = find_resource(uri_buffer, head);
 	}
 	
-	if (resource == NULL)
+	if (resource == NULL) 
 		return 1; // SEND RST, RETURN
 	
 	char* queries = strstr(uri_buffer, "?");
@@ -317,10 +353,10 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
         queries++;
     }
     
-    struct yuarel_param params[QRY_NUM];
-    int q = yuarel_parse_query(queries, '&', params, QRY_NUM);
+    struct yuarel_param params[OPT_NUM];
+    int q = yuarel_parse_query(queries, '&', params, OPT_NUM);
     
-    CoapPDU::ContentFormat content_format = resource->ct;
+    CoapPDU::ContentFormat content_format = resource->ct;   // TODO Why?
 	socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
 	
 	CoapPDU *response = new CoapPDU();
@@ -329,9 +365,10 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
 	response->setToken(recvPDU->getTokenPointer(), recvPDU->getTokenLength());
 	
     switch(recvPDU->getCode()) {
-		case CoapPDU::COAP_EMPTY: // send RST
+		case CoapPDU::COAP_EMPTY: { // send RST
 			break;
-		case CoapPDU::COAP_GET:
+		}
+		case CoapPDU::COAP_GET: {
 			std::stringstream* payload_stream = NULL;
 			get_handler(resource, payload_stream, params, q);
 			std::string payload_str = payload_stream->str();
@@ -342,10 +379,15 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
 			response->setContentFormat(content_format);
 			response->setPayload((uint8_t*)payload, strlen(payload));
 			break;
-		/* TODO
-		case CoapPDU::COAP_POST:
+		}
+		case CoapPDU::COAP_POST: {
+			char* payload = NULL;
+			post_handler(resource, (const char*)recvPDU->getPayloadPointer(), payload, params, q);
 			response->setCode(CoapPDU::COAP_CREATED);
+			response->setPayload((uint8_t*)payload, strlen(payload));
 			break;
+		}
+		/* TODO 
 		case CoapPDU::COAP_PUT:
 			response->setCode(CoapPDU::COAP_CHANGED);
 			break;
