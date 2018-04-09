@@ -24,12 +24,16 @@ coap get "coap://127.0.0.1:5683/.well-known/core?rt=temperature&ct=1"
 coap get "coap://127.0.0.1:5683/.well-known/core?rt=temperature&ct=0"
 echo "<topic1>" | coap post "coap://127.0.0.1:5683/ps"
 coap get "coap://127.0.0.1:5683/.well-known/core"
+coap get "coap://127.0.0.1:5683/ps/?rt=temperature"
+coap get "coap://127.0.0.1:5683/ps/?rt=temperature"
+echo "<topic1>;ct=40" | coap post "coap://127.0.0.1:5683/ps"
 */
 
 // TODO forbid ps(LINK)->topic1(TEXT)->topic2(TEXT)
 
 // TODO: Add max-age
 // IMPORTANT: All uri should be dynamically allocated
+// IMPORTANT: rt's will be dynamically allocated, probably val's too
 typedef struct Resource {
     const char* uri;
     const char* rt;
@@ -208,49 +212,53 @@ void update_discovery(Resource* discover) {
 void get_handler(Resource* resource, std::stringstream* &payload, struct yuarel_param* queries, int num_queries) {
     payload = NULL;
     std::stringstream* val = new std::stringstream();
-	
+    bool is_discovery = false;
+    
 	if (strcmp(resource->uri, PS_DISCOVERY) == 0) {
 	    *val << resource->val;
+	    payload = val;
+	    return;
 	} else if (strstr(resource->uri, DISCOVERY) != NULL) {
+	    is_discovery = true;
 		if (num_queries < 1) {
 		    update_discovery(discover);
 			*val << resource->val;
 			payload = val;
 			return;
 		}
-		
-	    struct yuarel_param* query = queries;
-        struct Item<Resource*>* item = NULL;
-        bool visited = false;
-        
-        for (int i = 0; i < num_queries; i++) {
-            if (strcmp(queries[i].key, "rt") == 0) {
-                find_resource_by_rt(queries[i].val, head, item, visited);
-                visited = true;
-            } else if (strcmp(queries[i].key, "ct") == 0) {
-                find_resource_by_ct(std::strtol(queries[i].val,NULL,10), head, item, visited);
-                visited = true;
-            }
-        }
-        
-        struct Item<Resource*>* current = item;
-        while(current) {
-        	*val << "<" << current->val->uri << ">;rt=\"" 
-        		<< current->val->rt << "\";ct=" << current->val->ct;
-        		
-        	struct Item<Resource*>* tmp = current->next;
-        	delete current;
-        	current = tmp;
-        	
-        	if (current) {
-        		*val << ",";
-        	}
-        }
-       	
-        //delete val;
-	} else {
-	    *val << resource->val;
+	} else if (num_queries < 1) {
+        *val << resource->val;
+        return;
 	}
+	
+    struct yuarel_param* query = queries;
+    struct Item<Resource*>* item = NULL;
+    bool visited = false;
+    Resource* source = is_discovery ? head : resource;
+    
+    for (int i = 0; i < num_queries; i++) {
+        if (strcmp(queries[i].key, "rt") == 0) {
+            find_resource_by_rt(queries[i].val, head, item, visited);
+            visited = true;
+        } else if (strcmp(queries[i].key, "ct") == 0) {
+            find_resource_by_ct(std::strtol(queries[i].val,NULL,10), head, item, visited);
+            visited = true;
+        }
+    }
+    
+    struct Item<Resource*>* current = item;
+    while(current) {
+    	*val << "<" << current->val->uri << ">;rt=\"" 
+    		<< current->val->rt << "\";ct=" << current->val->ct;
+    		
+    	struct Item<Resource*>* tmp = current->next;
+    	delete current;
+    	current = tmp;
+    	
+    	if (current) {
+    		*val << ",";
+    	}
+    }
 	
 	payload = val;
 }
@@ -266,7 +274,7 @@ Resource* post_handler(Resource* resource, const char* in, char* &payload, struc
 	struct yuarel_param params[OPT_NUM];
     int q = -1;
     if (p != NULL)
-        yuarel_parse_query(p+1, ';', params, OPT_NUM);  // TODO, fix options
+        q = yuarel_parse_query(p+1, ';', params, OPT_NUM);
 	
 	int uri_len = strlen(resource->uri);
 	int len = end-start+uri_len+1;
@@ -279,9 +287,20 @@ Resource* post_handler(Resource* resource, const char* in, char* &payload, struc
 	
 	Resource* new_resource = (Resource*) malloc(sizeof (Resource));
 	new_resource->uri = resource_uri;
-	new_resource->rt = "";  // TODO Options (Both)
-	new_resource->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN; 
-	new_resource->val = "val_hard";
+	new_resource->rt = "";
+	new_resource->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN;
+	
+	while (q > 0) {
+	    if (strcmp(params[--q].key, "rt") == 0) {
+	        char* rt = (char*) malloc(strlen(params[q].val)+1);
+	        strcpy(rt, params[q].val);
+	        new_resource->rt = rt;
+	    } else if (strcmp(params[q].key, "ct") == 0) {
+	        new_resource->ct = static_cast<CoapPDU::ContentFormat>(atoi(params[q].val));
+	    } 
+	}
+	
+	new_resource->val = "";
     new_resource->next = resource->children;
     resource->children = new_resource;
 	new_resource->children = NULL;
@@ -336,11 +355,9 @@ void test_make_resources() {
 	humidity->next= NULL;
 	humidity->children = NULL;
 	
-	ps_discover->next = discover;
-	discover->next = ps;
 	ps->children = temperature;
 	temperature->next = humidity;
-	head = ps_discover;
+	head = ps;
 	
     update_discovery(discover);
 }
@@ -351,6 +368,8 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
 	Resource* resource = NULL;
 	if (strcmp(uri_buffer, PS_DISCOVERY) == 0) {
 		resource = ps_discover;
+	} else if (strstr(uri_buffer, DISCOVERY) != NULL) {
+	    resource = discover;
 	} else {
 		resource = find_resource(uri_buffer, head);
 	}
