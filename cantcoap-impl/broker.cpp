@@ -25,11 +25,11 @@ coap get "coap://127.0.0.1:5683/.well-known/core?rt=temperature&ct=0"
 echo "<topic1>" | coap post "coap://127.0.0.1:5683/ps"
 coap get "coap://127.0.0.1:5683/.well-known/core"
 coap get "coap://127.0.0.1:5683/ps/?rt=temperature"
-coap get "coap://127.0.0.1:5683/ps/?rt=temperature"
 echo "<topic1>;ct=40" | coap post "coap://127.0.0.1:5683/ps"
 */
 
 // TODO forbid ps(LINK)->topic1(TEXT)->topic2(TEXT)
+// Meaning, only allow leaves to have values.
 
 // TODO: Add max-age
 // IMPORTANT: All uri should be dynamically allocated
@@ -55,52 +55,52 @@ struct Item {
 };
 
 void get_all_resources(struct Item<Resource*>* &item, Resource* head) {
-	if (head->children != NULL) {
-		get_all_resources(item, head->children);
-	} else {
-		struct Item<Resource*>* new_item = new struct Item<Resource*>();
-		new_item->val = head;
-		new_item->next = item;
-		item = new_item;
-	}
+        if (head->children != NULL) {
+                get_all_resources(item, head->children);
+        } else {
+                struct Item<Resource*>* new_item = new struct Item<Resource*>();
+                new_item->val = head;
+                new_item->next = item;
+                item = new_item;
+        }
 
-	if (head->next != NULL) {
-		get_all_resources(item, head->next);
-	}
+        if (head->next != NULL) {
+                get_all_resources(item, head->next);
+        }
 }
 
 Resource* find_resource(const char* uri, Resource* head) {
-	Resource* node = head;
-	while (node != NULL) {
-		if (strstr(uri, node->uri) == uri)
-			break;
-		node = node->next;
-	}
+        Resource* node = head;
+        while (node != NULL) {
+                if (strstr(uri, node->uri) == uri)
+                        break;
+                node = node->next;
+        }
 
-	if (node != NULL) {
-	    Resource* node2 = find_resource(uri, node->children);
-	    node = node2 != NULL ? node2 : node;
+        if (node != NULL) {
+            Resource* node2 = find_resource(uri, node->children);
+            node = node2 != NULL ? node2 : node;
     }
-	return node;
+        return node;
 }
 
 void find_resource_by_rt(const char* rt, Resource* head, struct Item<Resource*>* &item, bool visited) {
     if (!visited) {
-	    if (head->children != NULL) {
-	        find_resource_by_rt(rt, head->children, item, visited);
-	    } else if (strcmp(head->rt, rt) == 0) {
-	        struct Item<Resource*>* new_item = new struct Item<Resource*>();
-	        new_item->val = head;
-	        new_item->next = NULL;
-	        if (item != NULL) {
-	            new_item->next = item;
-	        }
-	        item = new_item;
-	    }
-	
-	    if (head->next != NULL) {
-	        find_resource_by_rt(rt, head->next, item, visited);
-	    }
+            if (head->children != NULL) {
+                find_resource_by_rt(rt, head->children, item, visited);
+            } else if (strcmp(head->rt, rt) == 0) {
+                struct Item<Resource*>* new_item = new struct Item<Resource*>();
+                new_item->val = head;
+                new_item->next = NULL;
+                if (item != NULL) {
+                    new_item->next = item;
+                }
+                item = new_item;
+            }
+        
+            if (head->next != NULL) {
+                find_resource_by_rt(rt, head->next, item, visited);
+            }
     } else if (item != NULL) {
         struct Item<Resource*>* current = item;
         bool is_head = true;
@@ -114,16 +114,16 @@ void find_resource_by_rt(const char* rt, Resource* head, struct Item<Resource*>*
                 
                 if (is_head) {
                     item = current;
-                	head_removed = true;
+                        head_removed = true;
                 }
             } else {
                 current = current->next;
             }
             
             if (head_removed) {
-            	head_removed = false;
+                head_removed = false;
             } else if (is_head) {
-            	is_head = false;
+                is_head = false;
             }
         }
     }
@@ -131,22 +131,22 @@ void find_resource_by_rt(const char* rt, Resource* head, struct Item<Resource*>*
 
 void find_resource_by_ct(int ct, Resource* head, struct Item<Resource*>* &item, bool visited) {
     if (!visited) {
-		if (head->children != NULL) {
-			find_resource_by_ct(ct, head->children, item, visited);
-		} else if (head->ct == ct) {
-			struct Item<Resource*>* new_item = new struct Item<Resource*>();
+                if (head->children != NULL) {
+                        find_resource_by_ct(ct, head->children, item, visited);
+                } else if (head->ct == ct) {
+                        struct Item<Resource*>* new_item = new struct Item<Resource*>();
 
-			new_item->val = head;
-			new_item->next = NULL;
-			if (item != NULL) {
-				new_item->next = item; 
-			}
-			item = new_item;
-		}
+                        new_item->val = head;
+                        new_item->next = NULL;
+                        if (item != NULL) {
+                                new_item->next = item; 
+                        }
+                        item = new_item;
+                }
 
-		if (head->next != NULL) {
-			find_resource_by_ct(ct, head->next, item, visited);
-		}
+                if (head->next != NULL) {
+                        find_resource_by_ct(ct, head->next, item, visited);
+                }
 
     } else if (item != NULL) {
         struct Item<Resource*>* current = item;
@@ -161,16 +161,16 @@ void find_resource_by_ct(int ct, Resource* head, struct Item<Resource*>* &item, 
                 
                 if (is_head) {
                     item = current;
-                	head_removed = true;
+                        head_removed = true;
                 }
             } else {
                 current = current->next;
             }
             
             if (head_removed) {
-            	head_removed = false;
+                head_removed = false;
             } else if (is_head) {
-            	is_head = false;
+                is_head = false;
             }
         }
     }
@@ -188,19 +188,19 @@ struct yuarel_param* find_query(struct yuarel_param* params, char* key) {
 
 void update_discovery(Resource* discover) {
     // TODO Do not include regular and ps discover in discover response
-	struct Item<Resource*>* current = NULL;
-	get_all_resources(current, head);
-	std::stringstream val("");
+        struct Item<Resource*>* current = NULL;
+        get_all_resources(current, head);
+        std::stringstream val("");
     while(current) {
-    	val << "<" << current->val->uri << ">;rt=\"" 
-    		<< current->val->rt << "\";ct=" << current->val->ct;
-    		
-    	struct Item<Resource*>* tmp = current->next;
-    	current = tmp;
-    	
-    	if (current) {
-    		val << ",";
-    	}
+        val << "<" << current->val->uri << ">;rt=\"" 
+                << current->val->rt << "\";ct=" << current->val->ct;
+                
+        struct Item<Resource*>* tmp = current->next;
+        current = tmp;
+        
+        if (current) {
+                val << ",";
+        }
     }
     
     std::string s = val.str();
@@ -214,23 +214,23 @@ void get_handler(Resource* resource, std::stringstream* &payload, struct yuarel_
     std::stringstream* val = new std::stringstream();
     bool is_discovery = false;
     
-	if (strcmp(resource->uri, PS_DISCOVERY) == 0) {
-	    *val << resource->val;
-	    payload = val;
-	    return;
-	} else if (strstr(resource->uri, DISCOVERY) != NULL) {
-	    is_discovery = true;
-		if (num_queries < 1) {
-		    update_discovery(discover);
-			*val << resource->val;
-			payload = val;
-			return;
-		}
-	} else if (num_queries < 1) {
+        if (strcmp(resource->uri, PS_DISCOVERY) == 0) {
+            *val << resource->val;
+            payload = val;
+            return;
+        } else if (strstr(resource->uri, DISCOVERY) != NULL) {
+            is_discovery = true;
+                if (num_queries < 1) {
+                    update_discovery(discover);
+                        *val << resource->val;
+                        payload = val;
+                        return;
+                }
+        } else if (num_queries < 1) {
         *val << resource->val;
         return;
-	}
-	
+        }
+        
     struct yuarel_param* query = queries;
     struct Item<Resource*>* item = NULL;
     bool visited = false;
@@ -238,29 +238,29 @@ void get_handler(Resource* resource, std::stringstream* &payload, struct yuarel_
     
     for (int i = 0; i < num_queries; i++) {
         if (strcmp(queries[i].key, "rt") == 0) {
-            find_resource_by_rt(queries[i].val, head, item, visited);
+            find_resource_by_rt(queries[i].val, source, item, visited);
             visited = true;
         } else if (strcmp(queries[i].key, "ct") == 0) {
-            find_resource_by_ct(std::strtol(queries[i].val,NULL,10), head, item, visited);
+            find_resource_by_ct(std::strtol(queries[i].val,NULL,10), source, item, visited);
             visited = true;
         }
     }
     
     struct Item<Resource*>* current = item;
     while(current) {
-    	*val << "<" << current->val->uri << ">;rt=\"" 
-    		<< current->val->rt << "\";ct=" << current->val->ct;
-    		
-    	struct Item<Resource*>* tmp = current->next;
-    	delete current;
-    	current = tmp;
-    	
-    	if (current) {
-    		*val << ",";
-    	}
+        *val << "<" << current->val->uri << ">;rt=\"" 
+                << current->val->rt << "\";ct=" << current->val->ct;
+                
+        struct Item<Resource*>* tmp = current->next;
+        delete current;
+        current = tmp;
+        
+        if (current) {
+                *val << ",";
+        }
     }
-	
-	payload = val;
+        
+        payload = val;
 }
 
 // TODO This only implements CREATE
@@ -271,42 +271,42 @@ Resource* post_handler(Resource* resource, const char* in, char* &payload, struc
     p = strchr(in, '>');
     int end = (int)(p-in);
     p = strchr(in, ';');
-	struct yuarel_param params[OPT_NUM];
+        struct yuarel_param params[OPT_NUM];
     int q = -1;
     if (p != NULL)
         q = yuarel_parse_query(p+1, ';', params, OPT_NUM);
-	
-	int uri_len = strlen(resource->uri);
-	int len = end-start+uri_len+1;
-	char* resource_uri = (char*) malloc(len);
-	memcpy(resource_uri, resource->uri, uri_len);
-	resource_uri[uri_len] = '/';
-	memcpy(resource_uri + uri_len + 1, in + start + 1, end-start-1);
-	resource_uri[len-1] = '\0';
-	payload = resource_uri;
-	
-	Resource* new_resource = (Resource*) malloc(sizeof (Resource));
-	new_resource->uri = resource_uri;
-	new_resource->rt = "";
-	new_resource->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN;
-	
-	while (q > 0) {
-	    if (strcmp(params[--q].key, "rt") == 0) {
-	        char* rt = (char*) malloc(strlen(params[q].val)+1);
-	        strcpy(rt, params[q].val);
-	        new_resource->rt = rt;
-	    } else if (strcmp(params[q].key, "ct") == 0) {
-	        new_resource->ct = static_cast<CoapPDU::ContentFormat>(atoi(params[q].val));
-	    } 
-	}
-	
-	new_resource->val = "";
+        
+        int uri_len = strlen(resource->uri);
+        int len = end-start+uri_len+1;
+        char* resource_uri = (char*) malloc(len);
+        memcpy(resource_uri, resource->uri, uri_len);
+        resource_uri[uri_len] = '/';
+        memcpy(resource_uri + uri_len + 1, in + start + 1, end-start-1);
+        resource_uri[len-1] = '\0';
+        payload = resource_uri;
+        
+        Resource* new_resource = (Resource*) malloc(sizeof (Resource));
+        new_resource->uri = resource_uri;
+        new_resource->rt = "";
+        new_resource->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN;
+        
+        while (q > 0) {
+            if (strcmp(params[--q].key, "rt") == 0) {
+                char* rt = (char*) malloc(strlen(params[q].val)+1);
+                strcpy(rt, params[q].val);
+                new_resource->rt = rt;
+            } else if (strcmp(params[q].key, "ct") == 0) {
+                new_resource->ct = static_cast<CoapPDU::ContentFormat>(atoi(params[q].val));
+            } 
+        }
+        
+        new_resource->val = "";
     new_resource->next = resource->children;
     resource->children = new_resource;
-	new_resource->children = NULL;
-	
-	update_discovery(discover); // TODO Behöver vi det?
-	return new_resource;
+        new_resource->children = NULL;
+        
+        update_discovery(discover); // TODO Behöver vi det?
+        return new_resource;
 }
 
 // =============== TEST ===============
@@ -315,152 +315,152 @@ Resource* post_handler(Resource* resource, const char* in, char* &payload, struc
 // QUESTION: Citation marks around rt or not? Compare with Herjulf impl coap.c
 
 void test_make_resources() {
-	ps_discover = (Resource*) malloc(sizeof (Resource));
-	ps_discover->uri = PS_DISCOVERY; //?rt=core.ps;rt=core.ps.discover;ct=40";
-	ps_discover->rt = "";
-	ps_discover->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
-	ps_discover->val = "</ps/>;rt=core.ps;rt=core.ps.discover;ct=40";
-	ps_discover->next = NULL;
-	ps_discover->children = NULL;
+        ps_discover = (Resource*) malloc(sizeof (Resource));
+        ps_discover->uri = PS_DISCOVERY; //?rt=core.ps;rt=core.ps.discover;ct=40";
+        ps_discover->rt = "";
+        ps_discover->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
+        ps_discover->val = "</ps/>;rt=core.ps;rt=core.ps.discover;ct=40";
+        ps_discover->next = NULL;
+        ps_discover->children = NULL;
     
-	discover = (Resource*) malloc(sizeof (Resource));
-	discover->uri = DISCOVERY;
-	discover->rt = "";
-	discover->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
-	discover->val="";
-	discover->next= NULL;
-	discover->children = NULL;
+        discover = (Resource*) malloc(sizeof (Resource));
+        discover->uri = DISCOVERY;
+        discover->rt = "";
+        discover->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
+        discover->val="";
+        discover->next= NULL;
+        discover->children = NULL;
     
     Resource* ps = (Resource*) malloc(sizeof (Resource));
-	ps->uri = "/ps";
-	ps->rt = "";
-	ps->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
-	ps->val = "";
-	ps->next= NULL;
-	ps->children = NULL;
+        ps->uri = "/ps";
+        ps->rt = "";
+        ps->ct = CoapPDU::COAP_CONTENT_FORMAT_APP_LINK;
+        ps->val = "";
+        ps->next= NULL;
+        ps->children = NULL;
     
-	Resource* temperature = (Resource*) malloc(sizeof (Resource));
-	temperature->uri = "/ps/temperature";
-	temperature->rt = "temperature";
-	temperature->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN;
-	temperature->val = "19";
-	temperature->next= NULL;
-	temperature->children = NULL;
-	
-	Resource* humidity = (Resource*) malloc(sizeof (Resource));
-	humidity->uri = "/ps/humidity";
-	humidity->rt = "humidity";
-	humidity->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN;
-	humidity->val = "75%";
-	humidity->next= NULL;
-	humidity->children = NULL;
-	
-	ps->children = temperature;
-	temperature->next = humidity;
-	head = ps;
-	
+        Resource* temperature = (Resource*) malloc(sizeof (Resource));
+        temperature->uri = "/ps/temperature";
+        temperature->rt = "temperature";
+        temperature->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN;
+        temperature->val = "19";
+        temperature->next= NULL;
+        temperature->children = NULL;
+        
+        Resource* humidity = (Resource*) malloc(sizeof (Resource));
+        humidity->uri = "/ps/humidity";
+        humidity->rt = "humidity";
+        humidity->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN;
+        humidity->val = "75%";
+        humidity->next= NULL;
+        humidity->children = NULL;
+        
+        ps->children = temperature;
+        temperature->next = humidity;
+        head = ps;
+        
     update_discovery(discover);
 }
 
 // ============== /TEST ===============
 // TODO: Extract queries
 int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockaddr_storage recvAddr) {
-	Resource* resource = NULL;
-	if (strcmp(uri_buffer, PS_DISCOVERY) == 0) {
-		resource = ps_discover;
-	} else if (strstr(uri_buffer, DISCOVERY) != NULL) {
-	    resource = discover;
-	} else {
-		resource = find_resource(uri_buffer, head);
-	}
-	
-	if (resource == NULL) 
-		return 1; // SEND RST, RETURN
-	
-	char* queries = strstr(uri_buffer, "?");
+        Resource* resource = NULL;
+        if (strcmp(uri_buffer, PS_DISCOVERY) == 0) {
+                resource = ps_discover;
+        } else if (strstr(uri_buffer, DISCOVERY) != NULL) {
+            resource = discover;
+        } else {
+                resource = find_resource(uri_buffer, head);
+        }
+        
+        if (resource == NULL) 
+                return 1; // SEND RST, RETURN
+        
+        char* queries = strstr(uri_buffer, "?");
     if (queries != NULL) {
         queries++;
     }
     
     struct yuarel_param params[OPT_NUM];
     int q = yuarel_parse_query(queries, '&', params, OPT_NUM);
-	socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
-	
-	CoapPDU *response = new CoapPDU();
-	response->setVersion(1);
-	response->setMessageID(recvPDU->getMessageID()); // OBS
-	response->setToken(recvPDU->getTokenPointer(), recvPDU->getTokenLength());
-	
+        socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
+        
+        CoapPDU *response = new CoapPDU();
+        response->setVersion(1);
+        response->setMessageID(recvPDU->getMessageID()); // OBS
+        response->setToken(recvPDU->getTokenPointer(), recvPDU->getTokenLength());
+        
     switch(recvPDU->getCode()) {
-		case CoapPDU::COAP_EMPTY: { // send RST
-			break;
-		}
-		case CoapPDU::COAP_GET: {
-			std::stringstream* payload_stream = NULL;
-			get_handler(resource, payload_stream, params, q);
-			std::string payload_str = payload_stream->str();
-			delete payload_stream;
-			char payload[payload_str.length()];
-			std::strcpy(payload, payload_str.c_str());
-			response->setCode(CoapPDU::COAP_CONTENT);
-			response->setContentFormat(resource->ct);
-			response->setPayload((uint8_t*)payload, strlen(payload));
-			break;
-		}
-		case CoapPDU::COAP_POST: {
-			char* payload = NULL;
-			post_handler(resource, (const char*)recvPDU->getPayloadPointer(), payload, params, q);
-			response->setCode(CoapPDU::COAP_CREATED);
-			response->setContentFormat(resource->ct);
-			response->setPayload((uint8_t*)payload, strlen(payload));
-			break;
-		}
-		/* TODO 
-		case CoapPDU::COAP_PUT:
-			response->setCode(CoapPDU::COAP_CHANGED);
-			break;
-		case CoapPDU::COAP_DELETE:
-			response->setCode(CoapPDU::COAP_DELETED);
-			// length 9 or 10 (including null)?
-			response->setPayload((uint8_t*) "DELETE OK", 9);
-			break;
-		*/
-	}
+                case CoapPDU::COAP_EMPTY: { // send RST
+                        break;
+                }
+                case CoapPDU::COAP_GET: {
+                        std::stringstream* payload_stream = NULL;
+                        get_handler(resource, payload_stream, params, q);
+                        std::string payload_str = payload_stream->str();
+                        delete payload_stream;
+                        char payload[payload_str.length()];
+                        std::strcpy(payload, payload_str.c_str());
+                        response->setCode(CoapPDU::COAP_CONTENT);
+                        response->setContentFormat(resource->ct);
+                        response->setPayload((uint8_t*)payload, strlen(payload));
+                        break;
+                }
+                case CoapPDU::COAP_POST: {
+                        char* payload = NULL;
+                        post_handler(resource, (const char*)recvPDU->getPayloadPointer(), payload, params, q);
+                        response->setCode(CoapPDU::COAP_CREATED);
+                        response->setContentFormat(resource->ct);
+                        response->setPayload((uint8_t*)payload, strlen(payload));
+                        break;
+                }
+                /* TODO 
+                case CoapPDU::COAP_PUT:
+                        response->setCode(CoapPDU::COAP_CHANGED);
+                        break;
+                case CoapPDU::COAP_DELETE:
+                        response->setCode(CoapPDU::COAP_DELETED);
+                        // length 9 or 10 (including null)?
+                        response->setPayload((uint8_t*) "DELETE OK", 9);
+                        break;
+                */
+        }
 
 // TODO IMPLEMENT NON-CONFIRMABLE
-	switch(recvPDU->getType()) {
-		case CoapPDU::COAP_CONFIRMABLE:
-			response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
-			break;
-		/* TODO
-		case CoapPDU::COAP_NON_CONFIRMABLE:
-			// fel: response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
-			break;
-		case CoapPDU::COAP_ACKNOWLEDGEMENT:
-			break;
-		case CoapPDU::COAP_RESET:
-			break;
-		default:
-			return 1;
-	*/
-	};
+        switch(recvPDU->getType()) {
+                case CoapPDU::COAP_CONFIRMABLE:
+                        response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
+                        break;
+                /* TODO
+                case CoapPDU::COAP_NON_CONFIRMABLE:
+                        // fel: response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
+                        break;
+                case CoapPDU::COAP_ACKNOWLEDGEMENT:
+                        break;
+                case CoapPDU::COAP_RESET:
+                        break;
+                default:
+                        return 1;
+        */
+        };
 
-	ssize_t sent = sendto(
-		sockfd,
-		response->getPDUPointer(),
-		response->getPDULength(),
-		0,
-		(struct sockaddr*) &recvAddr,
-		addrLen
-	);
+        ssize_t sent = sendto(
+                sockfd,
+                response->getPDUPointer(),
+                response->getPDULength(),
+                0,
+                (struct sockaddr*) &recvAddr,
+                addrLen
+        );
     
     delete response;
     
-	if(sent < 0) {
-		return 1;
-	}
-	
-	return 0;
+        if(sent < 0) {
+                return 1;
+        }
+        
+        return 0;
 }
 
 int main(int argc, char **argv) { 
@@ -487,7 +487,7 @@ int main(int argc, char **argv) {
     int sockfd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
     
     if(bind(sockfd, addr->ai_addr, addr->ai_addrlen) != 0) {
-		return -1;
+                return -1;
     }
     
     char buffer[BUF_LEN];
@@ -515,20 +515,20 @@ int main(int argc, char **argv) {
         }
         
         // depending on what this is, maybe call callback function
-		if(recvPDU->getURI(uri_buffer, URI_BUF_LEN, &recvURILen) != 0) {
-			continue;
-		}
-		
-		// uri_buffer[recvURILen] = '\0';
-		
-		if(recvURILen > 0) {
-			handle_request(uri_buffer, recvPDU, sockfd, recvAddr);
-		}
-		
-		// code 0 indicates an empty message, send RST
-		// && or ||, pdu length is size of whole packet?
-		if(recvPDU->getPDULength() == 0 || recvPDU->getCode() == 0) {
-			
+                if(recvPDU->getURI(uri_buffer, URI_BUF_LEN, &recvURILen) != 0) {
+                        continue;
+                }
+                
+                // uri_buffer[recvURILen] = '\0';
+                
+                if(recvURILen > 0) {
+                        handle_request(uri_buffer, recvPDU, sockfd, recvAddr);
+                }
+                
+                // code 0 indicates an empty message, send RST
+                // && or ||, pdu length is size of whole packet?
+                if(recvPDU->getPDULength() == 0 || recvPDU->getCode() == 0) {
+                        
         }
     }
     
