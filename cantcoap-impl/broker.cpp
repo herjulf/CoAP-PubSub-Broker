@@ -274,7 +274,7 @@ CoapPDU::Code get_handler(Resource* resource, std::stringstream* &payload, struc
     payload = val;
     return CoapPDU::COAP_CONTENT;
 }
-
+// TODO: Check whether ct has been received or not
 CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &payload, struct yuarel_param* queries, int num_queries) {
     std::stringstream* payload_stream = new std::stringstream();
     char * p = strchr(in, '<');
@@ -331,12 +331,13 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
     // TODO: return COAP_NOT_FOUND?
     if (resource->children != NULL)
         return CoapPDU::COAP_NOT_FOUND;     
-    
+
+    // Retrieve ct through getOptions
     CoapPDU::CoapOption* options = pdu->getOptions();
     int num_options = pdu->getNumOptions();
     while (num_options-- > 0) {
         if (options[num_options].optionNumber == CoapPDU::COAP_OPTION_CONTENT_FORMAT) {
-            int val = 0;
+            uint16_t val = 0;
             uint8_t* option_value = options[num_options].optionValuePointer;
             for (int i = 0; i < options[num_options].optionValueLength; i++) {
                 val <<= 8;
@@ -587,6 +588,8 @@ int main(int argc, char **argv) {
         if(recvPDU->getPDULength() == 0 || recvPDU->getCode() == 0) {
                 
         }
+	// Necessary to reset PDU to prevent garbage values residing in next message
+	recvPDU->reset();
     }
     
     return 0;
