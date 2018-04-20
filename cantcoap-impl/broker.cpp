@@ -335,8 +335,10 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
     // Retrieve ct through getOptions
     CoapPDU::CoapOption* options = pdu->getOptions();
     int num_options = pdu->getNumOptions();
+    bool ct_exists = false;
     while (num_options-- > 0) {
         if (options[num_options].optionNumber == CoapPDU::COAP_OPTION_CONTENT_FORMAT) {
+            ct_exists = true;
             uint16_t val = 0;
             uint8_t* option_value = options[num_options].optionValuePointer;
             for (int i = 0; i < options[num_options].optionValueLength; i++) {
@@ -349,6 +351,10 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
                 return CoapPDU::COAP_NOT_FOUND;
             break;
         }
+    }
+    
+    if (!ct_exists) {
+        return CoapPDU::COAP_BAD_REQUEST;
     }
     
     const char* payload = (const char*)pdu->getPayloadPointer();
