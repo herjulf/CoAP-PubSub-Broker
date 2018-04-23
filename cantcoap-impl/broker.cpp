@@ -238,7 +238,6 @@ CoapPDU::Code get_handler(Resource* resource, std::stringstream* &payload, struc
         return CoapPDU::COAP_CONTENT;
     }
         
-    struct yuarel_param* query = queries;
     struct Item<Resource*>* item = NULL;
     bool visited = false;
     Resource* source = is_discovery ? head : resource;
@@ -274,9 +273,8 @@ CoapPDU::Code get_handler(Resource* resource, std::stringstream* &payload, struc
     payload = val;
     return CoapPDU::COAP_CONTENT;
 }
-// TODO: Check whether ct has been received or not
+
 CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &payload, struct yuarel_param* queries, int num_queries) {
-    std::stringstream* payload_stream = new std::stringstream();
     char * p = strchr(in, '<');
     int start = (int)(p-in);
     p = strchr(in, '>');
@@ -290,7 +288,6 @@ CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &pay
     resource_uri[uri_len] = '/';
     memcpy(resource_uri + uri_len + 1, in + start + 1, end-start-1);
     resource_uri[len-1] = '\0';
-    payload = resource_uri;
     
     Resource* next = resource->children;
     while (next != NULL) {
@@ -299,30 +296,40 @@ CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &pay
         next = next->next;
     }
     
-    Resource* new_resource = new Resource;
-    new_resource->uri = resource_uri;
-    new_resource->rt = NULL;
-    new_resource->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN;
+    char* rt = NULL;
+    CoapPDU::ContentFormat ct;
     
+    bool ct_exists = false;
     struct yuarel_param params[OPT_NUM];
     int q = -1;
     if (p != NULL)
         q = yuarel_parse_query(p+1, ';', params, OPT_NUM);
     while (q > 0) {
         if (strcmp(params[--q].key, "rt") == 0) {
-            char* rt = new char[strlen(params[q].val)+1];
+            rt = new char[strlen(params[q].val)+1];
             strcpy(rt, params[q].val);
-            new_resource->rt = rt;
         } else if (strcmp(params[q].key, "ct") == 0) {
-            new_resource->ct = static_cast<CoapPDU::ContentFormat>(atoi(params[q].val));
+            ct_exists = true;
+            ct = static_cast<CoapPDU::ContentFormat>(atoi(params[q].val));
         } 
     }
+    
+    
+    if (!ct_exists) {
+        return CoapPDU::COAP_BAD_REQUEST;
+    }
+    
+    Resource* new_resource = new Resource;
+    new_resource->uri = resource_uri;
+    new_resource->rt = rt;
+    new_resource->ct = ct;
     
     new_resource->val = NULL;
     new_resource->next = resource->children;
     resource->children = new_resource;
     new_resource->children = NULL;
     
+    payload = resource_uri;
     update_discovery(discover); // TODO Behöver vi det?
     return CoapPDU::COAP_CREATED;
 }
@@ -474,7 +481,8 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                 CoapPDU::Code code = post_create_handler(resource, (const char*)recvPDU->getPayloadPointer(), payload, params, q);
                 response->setCode(code);
                 response->setContentFormat(resource->ct);
-                response->setPayload((uint8_t*)payload, strlen(payload));
+                if (payload != NULL)
+                    response->setPayload((uint8_t*)payload, strlen(payload));
                 break;
             }
             case CoapPDU::COAP_PUT:
