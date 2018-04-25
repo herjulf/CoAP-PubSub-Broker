@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <sstream>
 #include <iostream>
+#include <map>
 #include "yuarel.h"
 
 #define BUF_LEN 512
@@ -31,10 +32,16 @@ echo "22" | coap put "coap://127.0.0.1:5683/ps/topic1"
 coap get "coap://127.0.0.1:5683/ps/topic1"
 */
 
+// Generic list
+template<typename T> 
+struct Item {
+    T val;
+    struct Item<T>* next;
+};
+
 // TODO forbid ps(LINK)->topic1(TEXT)->topic2(TEXT)
 // Meaning, only allow leaves to have values.
 
-// TODO: Add max-age
 // IMPORTANT: All uri should be dynamically allocated
 // IMPORTANT: rt's will be dynamically allocated, probably val's too
 typedef struct Resource {
@@ -44,18 +51,19 @@ typedef struct Resource {
     const char* val;
     Resource * children;
     Resource * next;
+    struct Item<sockaddr_in*>* subs;
 } Resource;
+
+struct SubscriberComparator {
+    bool operator() (const sockaddr_in& a, const sockaddr_in& b) const {
+        return a.sin_addr.s_addr < b.sin_addr.s_addr || a.sin_port < b.sin_port;
+    }
+};
 
 static Resource* head;
 static Resource* ps_discover;
 static Resource* discover;
-
-// Generic list
-template<typename T> 
-struct Item {
-    T val;
-    struct Item<T>* next;
-};
+static std::map<sockaddr_in,int,SubscriberComparator> subscribers;
 
 void get_all_resources(struct Item<Resource*>* &item, Resource* head) {
     if (head->children != NULL) {
@@ -215,7 +223,7 @@ void update_discovery(Resource* discover) {
     discover->val = d;
 }
 
-CoapPDU::Code get_handler(Resource* resource, std::stringstream* &payload, struct yuarel_param* queries, int num_queries) {
+CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &payload, struct yuarel_param* queries, int num_queries) {
     payload = NULL;
     std::stringstream* val = new std::stringstream();
     bool is_discovery = false;
@@ -274,6 +282,60 @@ CoapPDU::Code get_handler(Resource* resource, std::stringstream* &payload, struc
     return CoapPDU::COAP_CONTENT;
 }
 
+CoapPDU::Code get_subscribe_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* recvAddr, std::stringstream* &payload) {
+    CoapPDU::CoapOption* options = pdu->getOptions();
+    int num_options = pdu->getNumOptions();
+    while (num_options-- > 0) {
+        if (options[num_options].optionNumber == CoapPDU::COAP_OPTION_CONTENT_FORMAT) {
+            uint32_t val = 0;
+            uint8_t* option_value = options[num_options].optionValuePointer;
+            for (int i = 0; i < options[num_options].optionValueLength; i++) {
+                val <<= 8;
+                val += *option_value;
+                option_value++;
+            }
+            
+            if (resource->ct != val)
+                return CoapPDU::COAP_UNSUPPORTED_CONTENT_FORMAT;
+            break;
+        }
+    }
+    
+    if (subscribers.count(*recvAddr) > 0) {
+        subscribers[*recvAddr]++;
+    } else {
+        subscribers[*recvAddr] = 0;
+    }
+    
+    if (resource->val != NULL)
+        *payload << resource->val;
+    return CoapPDU::COAP_CONTENT;
+}
+
+CoapPDU::Code get_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* recvAddr, std::stringstream* &payload, struct yuarel_param* queries, int num_queries) {
+    CoapPDU::CoapOption* options = pdu->getOptions();
+    int num_options = pdu->getNumOptions();
+    bool observe_is_zero = false;
+    while (num_options-- > 0) {
+        if (options[num_options].optionNumber == CoapPDU::COAP_OPTION_OBSERVE) {
+            observe_is_zero = true;
+            uint8_t* val = options[num_options].optionValuePointer;
+            for (int i = 0; i < options[num_options].optionValueLength; i++) {
+                if (val != 0)
+                    break;
+            }
+            
+            if (val == 0)
+                observe_is_zero = true;
+            break;
+        }
+    }
+    
+    if (observe_is_zero)
+        return get_subscribe_handler(resource, pdu, recvAddr, payload);
+    return get_discover_handler(resource, payload, queries, num_queries);
+}
+
 CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &payload, struct yuarel_param* queries, int num_queries) {
     char * p = strchr(in, '<');
     int start = (int)(p-in);
@@ -314,7 +376,6 @@ CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &pay
         } 
     }
     
-    
     if (!ct_exists) {
         return CoapPDU::COAP_BAD_REQUEST;
     }
@@ -328,6 +389,7 @@ CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &pay
     new_resource->next = resource->children;
     resource->children = new_resource;
     new_resource->children = NULL;
+    new_resource->subs = NULL;
     
     payload = resource_uri;
     update_discovery(discover); // TODO Behöver vi det?
@@ -386,6 +448,7 @@ void test_make_resources() {
     ps_discover->val = "</ps/>;rt=core.ps;rt=core.ps.discover;ct=40";
     ps_discover->next = NULL;
     ps_discover->children = NULL;
+    ps_discover->subs = NULL;
 
     discover = new Resource;
     discover->uri = DISCOVERY;
@@ -394,6 +457,7 @@ void test_make_resources() {
     discover->val = NULL;
     discover->next= NULL;
     discover->children = NULL;
+    discover->subs = NULL;
 
     Resource* ps = new Resource;
     ps->uri = "/ps";
@@ -402,6 +466,7 @@ void test_make_resources() {
     ps->val = NULL;
     ps->next= NULL;
     ps->children = NULL;
+    ps->subs = NULL;
 
     Resource* temperature = new Resource;
     temperature->uri = "/ps/temperature";
@@ -410,6 +475,7 @@ void test_make_resources() {
     temperature->val = "19";
     temperature->next= NULL;
     temperature->children = NULL;
+    temperature->subs = NULL;
 
     Resource* humidity = new Resource;
     humidity->uri = "/ps/humidity";
@@ -418,6 +484,7 @@ void test_make_resources() {
     humidity->val = "75%";
     humidity->next= NULL;
     humidity->children = NULL;
+    humidity->subs = NULL;
 
     ps->children = temperature;
     temperature->next = humidity;
@@ -427,7 +494,7 @@ void test_make_resources() {
 }
 // ============== /TEST ===============
 
-int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockaddr_storage recvAddr) {
+int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockaddr_in* recvAddr) {
     Resource* resource = NULL;
     if (strcmp(uri_buffer, PS_DISCOVERY) == 0) {
         resource = ps_discover;
@@ -466,7 +533,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
             }
             case CoapPDU::COAP_GET: {
                 std::stringstream* payload_stream = NULL;
-                CoapPDU::Code code = get_handler(resource, payload_stream, params, q);
+                CoapPDU::Code code = get_handler(resource, recvPDU, recvAddr, payload_stream, params, q);
                 std::string payload_str = payload_stream->str();
                 delete payload_stream;
                 char payload[payload_str.length()];
@@ -522,7 +589,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
         response->getPDUPointer(),
         response->getPDULength(),
         0,
-        (struct sockaddr*) &recvAddr,
+        (struct sockaddr*) &(*recvAddr),
         addrLen
     );
     
@@ -563,8 +630,8 @@ int main(int argc, char **argv) {
     }
     
     char buffer[BUF_LEN];
-    struct sockaddr_storage recvAddr;
-    socklen_t recvAddrLen = sizeof(struct sockaddr_storage);
+    struct sockaddr_in recvAddr;
+    socklen_t recvAddrLen = sizeof(struct sockaddr_in);
     
     char uri_buffer[URI_BUF_LEN];
     int recvURILen;
@@ -594,7 +661,7 @@ int main(int argc, char **argv) {
         // uri_buffer[recvURILen] = '\0';
         
         if(recvURILen > 0) {
-            handle_request(uri_buffer, recvPDU, sockfd, recvAddr);
+            handle_request(uri_buffer, recvPDU, sockfd, &recvAddr);
         }
         
         // code 0 indicates an empty message, send RST
