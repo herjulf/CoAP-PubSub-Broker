@@ -56,7 +56,14 @@ typedef struct Resource {
 
 struct SubscriberComparator {
     bool operator() (const sockaddr_in& a, const sockaddr_in& b) const {
-        return a.sin_addr.s_addr < b.sin_addr.s_addr || a.sin_port < b.sin_port;
+	if (a.sin_addr.s_addr < b.sin_addr.s_addr)
+	    return true;
+	else if (a.sin_addr.s_addr > b.sin_addr.s_addr)
+	    return false;
+	else if (a.sin_port < b.sin_port)
+	    return true;
+	else
+	    return false;
     }
 };
 
