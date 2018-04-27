@@ -292,8 +292,10 @@ CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &paylo
 CoapPDU::Code get_subscribe_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* recvAddr, std::stringstream* &payload) {
     CoapPDU::CoapOption* options = pdu->getOptions();
     int num_options = pdu->getNumOptions();
+    bool ct_exists = false;
     while (num_options-- > 0) {
         if (options[num_options].optionNumber == CoapPDU::COAP_OPTION_CONTENT_FORMAT) {
+            ct_exists = true;
             uint32_t val = 0;
             uint8_t* option_value = options[num_options].optionValuePointer;
             for (int i = 0; i < options[num_options].optionValueLength; i++) {
@@ -308,8 +310,24 @@ CoapPDU::Code get_subscribe_handler(Resource* resource, CoapPDU* pdu, struct soc
         }
     }
     
+    if (!ct_exists)
+        return CoapPDU::COAP_BAD_REQUEST;
+    
     if (subscribers.count(*recvAddr) > 0) {
-        subscribers[*recvAddr]++;
+        struct Item<sockaddr_in*>* sub = resource->subs;
+        bool already_subscribed = false;
+        while (sub != NULL) {
+            if (sub->val->sin_addr.s_addr == recvAddr->sin_addr.s_addr 
+                && sub->val->sin_port == recvAddr->sin_port) {
+                already_subscribed = true;    
+                break;
+            }
+            
+            sub = sub->next;
+        }
+        
+        if (!already_subscribed)
+            subscribers[*recvAddr]++;
     } else {
         subscribers[*recvAddr] = 0;
     }
@@ -330,10 +348,11 @@ CoapPDU::Code get_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* 
             for (int i = 0; i < options[num_options].optionValueLength; i++) {
                 if (val != 0)
                     break;
+                val++;
             }
             
-            if (val == 0)
-                observe_is_zero = true;
+            if (val != 0)
+                observe_is_zero = false;
             break;
         }
     }
