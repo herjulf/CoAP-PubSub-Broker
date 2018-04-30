@@ -543,7 +543,8 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
         response->setContentFormat(resource->ct);
         resource_found = false;
     }
-        
+    
+    bool publish_to_all = false;    
     if (resource_found) {
         char* queries = strstr(uri_buffer, "?");
         if (queries != NULL) {
@@ -582,6 +583,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                 CoapPDU::Code code = put_publish_handler(resource, recvPDU);
                 response->setCode(code);
                 response->setContentFormat(resource->ct);
+                publish_to_all = true;
                 break;
             /* TODO case CoapPDU::COAP_DELETE:
                 response->setCode(CoapPDU::COAP_DELETED);
@@ -620,6 +622,26 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
     );
     
     delete response;
+    
+    if (publish_to_all) {
+        CoapPDU pdu = *recvPDU;
+        //pdu.setCode(code);
+        pdu.setContentFormat(resource->ct);
+        // If the following were set to confirmable, what would the response message type be in case of failure?
+        pdu.setType(CoapPDU::COAP_NON_CONFIRMABLE);
+        struct Item<sockaddr_in*>* subscriber = resource->subs;
+        while (subscriber != NULL) {
+            sendto(
+                sockfd,
+                pdu.getPDUPointer(),
+                pdu.getPDULength(),
+                0,
+                (struct sockaddr*) &(*subscriber),
+                addrLen
+            );
+            subscriber = subscriber->next;
+        }   
+    }
     
     if(sent < 0) {
         return 1;
