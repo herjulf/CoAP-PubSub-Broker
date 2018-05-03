@@ -54,6 +54,12 @@ typedef struct Resource {
     struct Item<sockaddr_in*>* subs;
 } Resource;
 
+struct SubscriberInfo {
+    uint16_t subscriptions;
+    uint32_t observe;
+    uint64_t token;
+};
+
 struct SubscriberComparator {
     bool operator() (const sockaddr_in& a, const sockaddr_in& b) const {
 	if (a.sin_addr.s_addr < b.sin_addr.s_addr)
@@ -70,7 +76,7 @@ struct SubscriberComparator {
 static Resource* head;
 static Resource* ps_discover;
 static Resource* discover;
-static std::map<sockaddr_in,int,SubscriberComparator> subscribers;
+static std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator> subscribers;
 
 void get_all_resources(struct Item<Resource*>* &item, Resource* head) {
     if (head->children != NULL) {
@@ -289,14 +295,14 @@ CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &paylo
     return CoapPDU::COAP_CONTENT;
 }
 
-CoapPDU::Code get_subscribe_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* recvAddr, std::stringstream* &payload) {
+CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* recvAddr, std::stringstream* &payload, bool subscribe) {
     CoapPDU::CoapOption* options = pdu->getOptions();
     int num_options = pdu->getNumOptions();
     bool ct_exists = false;
     while (num_options-- > 0) {
         if (options[num_options].optionNumber == CoapPDU::COAP_OPTION_CONTENT_FORMAT) {
             ct_exists = true;
-            uint32_t val = 0;
+            uint32_t val = 0;   // TODO Why 32? 
             uint8_t* option_value = options[num_options].optionValuePointer;
             for (int i = 0; i < options[num_options].optionValueLength; i++) {
                 val <<= 8;
@@ -313,52 +319,88 @@ CoapPDU::Code get_subscribe_handler(Resource* resource, CoapPDU* pdu, struct soc
     if (!ct_exists)
         return CoapPDU::COAP_BAD_REQUEST;
     
+    bool already_subscribed = false;
     if (subscribers.count(*recvAddr) > 0) {
         struct Item<sockaddr_in*>* sub = resource->subs;
-        bool already_subscribed = false;
+        struct Item<sockaddr_in*>* prev = sub;
         while (sub != NULL) {
             if (sub->val->sin_addr.s_addr == recvAddr->sin_addr.s_addr 
                 && sub->val->sin_port == recvAddr->sin_port) {
-                already_subscribed = true;    
+                already_subscribed = true;
+                
+                if (!subscribe) {
+                    if (prev != sub) {
+                        prev->next = sub->next;
+                    }
+                    delete sub;
+                }
+                
                 break;
             }
             
+            prev = sub;
             sub = sub->next;
         }
-        
-        if (!already_subscribed)
-            subscribers[*recvAddr]++;
-    } else {
-        subscribers[*recvAddr] = 0;
     }
     
-    if (resource->val != NULL)
+    if (already_subscribed && !subscribe) {
+        struct SubscriberInfo* subscriber = &(subscribers[*recvAddr]);
+        subscriber->subscriptions--;
+        if (subscriber->subscriptions == 0)
+            subscribers.erase(*recvAddr);
+    } else if (already_subscribed) {
+        struct SubscriberInfo* subscriber = &(subscribers[*recvAddr]);
+        subscriber->subscriptions++;
+        subscriber->observe++;
+        subscriber->observe &= 0xFFFFFF; // TODO: Implement it differently
+    } else {
+        struct SubscriberInfo* subscriber = &(subscribers[*recvAddr]);
+        subscriber->subscriptions = 0;
+        subscriber->token = 0;
+        int len = pdu->getTokenLength();
+        uint8_t* token_pointer = pdu->getTokenPointer();
+        while (len-- > 0) {
+            subscriber->token += *token_pointer << len;
+            token_pointer++;
+        }
+        subscriber->observe = 0; // TODO: Implement it differently
+    }
+    
+    if (resource->val != NULL) {
         *payload << resource->val;
-    return CoapPDU::COAP_CONTENT;
+        return CoapPDU::COAP_CONTENT;
+    }
+    
+    return CoapPDU::COAP_NO_CONTENT;
 }
 
 CoapPDU::Code get_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* recvAddr, std::stringstream* &payload, struct yuarel_param* queries, int num_queries) {
     CoapPDU::CoapOption* options = pdu->getOptions();
     int num_options = pdu->getNumOptions();
-    bool observe_is_zero = false;
+    bool is_subscribe = false;
+    bool is_unsubscribe = false;
     while (num_options-- > 0) {
         if (options[num_options].optionNumber == CoapPDU::COAP_OPTION_OBSERVE) {
-            observe_is_zero = true;
-            uint8_t* val = options[num_options].optionValuePointer;
+            is_subscribe = true;
+            uint8_t* observe = options[num_options].optionValuePointer;
             for (int i = 0; i < options[num_options].optionValueLength; i++) {
-                if (val != 0)
+                if (*observe != 0) {
+                    is_subscribe = false;
                     break;
-                val++;
+                }
+                observe++;
             }
             
-            if (val != 0)
-                observe_is_zero = false;
+            if (!is_subscribe && *observe == 1)
+                is_unsubscribe = true;
             break;
         }
     }
     
-    if (observe_is_zero)
-        return get_subscribe_handler(resource, pdu, recvAddr, payload);
+    if (is_subscribe)
+        return get_subscription_handler(resource, pdu, recvAddr, payload, true);
+    else if (is_unsubscribe)
+        return get_subscription_handler(resource, pdu, recvAddr, payload, false);
     return get_discover_handler(resource, payload, queries, num_queries);
 }
 
@@ -567,7 +609,8 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                 std::strcpy(payload, payload_str.c_str());
                 response->setCode(code);
                 response->setContentFormat(resource->ct);
-                response->setPayload((uint8_t*)payload, strlen(payload));
+                if (code != CoapPDU::COAP_NO_CONTENT)
+                    response->setPayload((uint8_t*)payload, strlen(payload));
                 break;
             }
             case CoapPDU::COAP_POST: {
@@ -579,12 +622,13 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                     response->setPayload((uint8_t*)payload, strlen(payload));
                 break;
             }
-            case CoapPDU::COAP_PUT:
+            case CoapPDU::COAP_PUT: {
                 CoapPDU::Code code = put_publish_handler(resource, recvPDU);
                 response->setCode(code);
                 response->setContentFormat(resource->ct);
                 publish_to_all = true;
                 break;
+             }
             /* TODO case CoapPDU::COAP_DELETE:
                 response->setCode(CoapPDU::COAP_DELETED);
                 // length 9 or 10 (including null)?
@@ -624,17 +668,14 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
     delete response;
     
     if (publish_to_all) {
-        CoapPDU pdu = *recvPDU;
-        //pdu.setCode(code);
-        pdu.setContentFormat(resource->ct);
-        // If the following were set to confirmable, what would the response message type be in case of failure?
-        pdu.setType(CoapPDU::COAP_NON_CONFIRMABLE);
+        recvPDU->setContentFormat(resource->ct);
+        recvPDU->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
         struct Item<sockaddr_in*>* subscriber = resource->subs;
         while (subscriber != NULL) {
             sendto(
                 sockfd,
-                pdu.getPDUPointer(),
-                pdu.getPDULength(),
+                recvPDU->getPDUPointer(),
+                recvPDU->getPDULength(),
                 0,
                 (struct sockaddr*) &(*subscriber),
                 addrLen
