@@ -39,11 +39,7 @@ struct Item {
     struct Item<T>* next;
 };
 
-// TODO forbid ps(LINK)->topic1(TEXT)->topic2(TEXT)
-// Meaning, only allow leaves to have values.
-
-// IMPORTANT: All uri should be dynamically allocated
-// IMPORTANT: rt's will be dynamically allocated, probably val's too
+// All uri's, rt's and val's should be dynamically allocated
 typedef struct Resource {
     const char* uri;
     const char* rt;
@@ -78,9 +74,9 @@ static Resource* ps_discover;
 static Resource* discover;
 static std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator> subscribers;
 
-void get_all_resources(struct Item<Resource*>* &item, Resource* head) {
+void get_all_topics(struct Item<Resource*>* &item, Resource* head) {
     if (head->children != NULL) {
-        get_all_resources(item, head->children);
+        get_all_topics(item, head->children);
     } else {
         struct Item<Resource*>* new_item = new struct Item<Resource*>();
         new_item->val = head;
@@ -89,7 +85,7 @@ void get_all_resources(struct Item<Resource*>* &item, Resource* head) {
     }
 
     if (head->next != NULL) {
-        get_all_resources(item, head->next);
+        get_all_topics(item, head->next);
     }
 }
 
@@ -212,7 +208,7 @@ struct yuarel_param* find_query(struct yuarel_param* params, char* key) {
 
 void update_discovery(Resource* discover) {
     struct Item<Resource*>* current = NULL;
-    get_all_resources(current, head);
+    get_all_topics(current, head);
     std::stringstream val("");
     while(current) {
         if (current->val->rt == NULL) {
@@ -223,6 +219,7 @@ void update_discovery(Resource* discover) {
         }
                 
         struct Item<Resource*>* tmp = current->next;
+        delete current;
         current = tmp;
         
         if (current) {
@@ -296,6 +293,9 @@ CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &paylo
 }
 
 CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* recvAddr, std::stringstream* &payload, bool subscribe) {
+    if (resource->children != NULL)
+        return CoapPDU::COAP_NOT_FOUND;    
+    
     CoapPDU::CoapOption* options = pdu->getOptions();
     int num_options = pdu->getNumOptions();
     bool ct_exists = false;
@@ -344,26 +344,26 @@ CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct 
     }
     
     if (already_subscribed && !subscribe) {
-        struct SubscriberInfo* subscriber = &(subscribers[*recvAddr]);
-        subscriber->subscriptions--;
-        if (subscriber->subscriptions == 0)
+        struct SubscriberInfo& subscriber = subscribers[*recvAddr];
+        subscriber.subscriptions--;
+        if (subscriber.subscriptions == 0)
             subscribers.erase(*recvAddr);
     } else if (already_subscribed) {
-        struct SubscriberInfo* subscriber = &(subscribers[*recvAddr]);
-        subscriber->subscriptions++;
-        subscriber->observe++;
-        subscriber->observe &= 0xFFFFFF; // TODO: Implement it differently
+        struct SubscriberInfo& subscriber = subscribers[*recvAddr];
+        subscriber.subscriptions++;
+        subscriber.observe++;
+        subscriber.observe &= 0x7FFFFF; // TODO: Implement it differently
     } else {
-        struct SubscriberInfo* subscriber = &(subscribers[*recvAddr]);
-        subscriber->subscriptions = 0;
-        subscriber->token = 0;
+        struct SubscriberInfo& subscriber = subscribers[*recvAddr];
+        subscriber.subscriptions = 0;
+        subscriber.token = 0;
         int len = pdu->getTokenLength();
         uint8_t* token_pointer = pdu->getTokenPointer();
         while (len-- > 0) {
-            subscriber->token += *token_pointer << len;
+            subscriber.token += *token_pointer << len;
             token_pointer++;
         }
-        subscriber->observe = 0; // TODO: Implement it differently
+        subscriber.observe = 0; // TODO: Implement it differently
     }
     
     if (resource->val != NULL) {
@@ -503,6 +503,42 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
     return CoapPDU::COAP_CHANGED;
 }
 
+void remove_all_resources(Resource* resource, bool is_head) {
+    if (resource->children != NULL) {
+        remove_all_resources(resource->children, false);
+    }
+    
+    delete resource->uri;
+    delete resource->rt;
+    delete resource->val;
+    
+    struct Item<sockaddr_in*>* sub = resource->subs;
+    sockaddr_in* key = sub->val;
+    while (sub != NULL) {
+        struct SubscriberInfo& val = subscribers[*key];
+        if (--val.subscriptions == 0)
+            subscribers.erase(*key);
+        sub = sub->next;
+    }
+    
+    if (!is_head) { 
+        Resource *p = resource->next, *q;
+        delete resource;
+        while (p != NULL) {
+            q = p->next;
+            remove_all_resources(p, false);
+            p = q;
+        }
+    } else {
+        delete resource;
+    }
+}
+
+CoapPDU::Code delete_remove_handler(Resource* resource) {
+    remove_all_resources(resource, true);
+    return CoapPDU::COAP_DELETED;
+}
+
 // =============== TEST ===============
 
 // CoAP PUBSUB Discovery
@@ -629,12 +665,13 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                 publish_to_all = true;
                 break;
              }
-            /* TODO case CoapPDU::COAP_DELETE:
-                response->setCode(CoapPDU::COAP_DELETED);
+            case CoapPDU::COAP_DELETE: {
+                CoapPDU::Code code = delete_remove_handler(resource);
+                response->setCode(code);
                 // length 9 or 10 (including null)?
-                response->setPayload((uint8_t*) "DELETE OK", 9);
+                // response->setPayload((uint8_t*) "DELETE OK", 9);
                 break;
-            */
+            }
         }
     }
 
