@@ -92,14 +92,22 @@ void get_all_topics(struct Item<Resource*>* &item, Resource* head) {
 Resource* find_resource(const char* uri, Resource* head) {
     Resource* node = head;
     while (node != NULL) {
-        if (strstr(uri, node->uri) == uri)
-            break;
+        //if (strcmp(uri, node->uri) == 0)
+        //    return node;
+        if (strstr(uri, node->uri) == uri) {
+            char c = uri[strlen(node->uri)];
+            if (c == '\0')
+                return node;
+            if (c == '/')
+                break;
+        }
         node = node->next;
     }
 
     if (node != NULL) {
-        Resource* node2 = find_resource(uri, node->children);
-        node = node2 != NULL ? node2 : node;
+        //Resource* node2 = find_resource(uri, node->children);
+        //node = node2 != NULL ? node2 : node;
+        node = find_resource(uri, node->children);
     }
     return node;
 }
@@ -227,6 +235,7 @@ void update_discovery(Resource* discover) {
         }
     }
     
+    delete discover->val;
     std::string s = val.str();
     char* d = new char[s.length()];
     std::memcpy(d, s.c_str(), s.length());
@@ -236,6 +245,7 @@ void update_discovery(Resource* discover) {
 CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &payload, struct yuarel_param* queries, int num_queries) {
     payload = NULL;
     std::stringstream* val = new std::stringstream();
+    bool empty_stringstream = true;
     bool is_discovery = false;
     
     if (strcmp(resource->uri, PS_DISCOVERY) == 0) {
@@ -251,9 +261,13 @@ CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &paylo
             return CoapPDU::COAP_CONTENT;
         }
     } else if (num_queries < 1) {
-        *val << resource->val;
-        payload = val;
-        return CoapPDU::COAP_CONTENT;
+        if (resource->val) { 
+            *val << resource->val;
+            payload = val;
+            return CoapPDU::COAP_CONTENT;
+        }
+        delete val;
+        return CoapPDU::COAP_NO_CONTENT;
     }
         
     struct Item<Resource*>* item = NULL;
@@ -271,6 +285,8 @@ CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &paylo
     }
     
     struct Item<Resource*>* current = item;
+    if (current != NULL)
+        empty_stringstream = false;
     while(current) {
         if (current->val->rt == NULL) {
             *val << "<" << current->val->uri << ">;ct=" << current->val->ct;
@@ -287,7 +303,12 @@ CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &paylo
             *val << ",";
         }
     }
-        
+    
+    if (empty_stringstream) {
+        delete val;
+        return CoapPDU::COAP_NOT_FOUND;
+    }
+    
     payload = val;
     return CoapPDU::COAP_CONTENT;
 }
@@ -498,7 +519,7 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
     char* val = new char[strlen(payload)+1];
     strcpy(val, payload);
     //const char* val = (const char*)pdu->getPayloadCopy();
-    delete resource->val;
+    delete[] resource->val;
     resource->val = val;
     return CoapPDU::COAP_CHANGED;
 }
@@ -508,9 +529,9 @@ void remove_all_resources(Resource* resource, bool is_head) {
         remove_all_resources(resource->children, false);
     }
     
-    delete resource->uri;
-    delete resource->rt;
-    delete resource->val;
+    delete[] resource->uri;
+    delete[] resource->rt;
+    delete[] resource->val;
     
     struct Item<sockaddr_in*>* sub = resource->subs;
     sockaddr_in* key = sub->val;
@@ -639,15 +660,15 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
             case CoapPDU::COAP_GET: {
                 std::stringstream* payload_stream = NULL;
                 CoapPDU::Code code = get_handler(resource, recvPDU, recvAddr, payload_stream, params, q);
-                std::string payload_str = payload_stream->str();
-                delete payload_stream;
-                char payload[payload_str.length()];
-                std::strcpy(payload, payload_str.c_str());
                 response->setCode(code);
-                if (code != CoapPDU::COAP_NO_CONTENT) {
+                if (code != CoapPDU::COAP_NO_CONTENT && code != CoapPDU::COAP_NOT_FOUND) {
+                    std::string payload_str = payload_stream->str();
+                    char payload[payload_str.length()];
+                    std::strcpy(payload, payload_str.c_str());
                     response->setContentFormat(resource->ct);
                     response->setPayload((uint8_t*)payload, strlen(payload));
                 }
+                delete payload_stream;
                 break;
             }
             case CoapPDU::COAP_POST: {

@@ -2,7 +2,7 @@ INCLUDE= -I cantcoap/ -I yuarel
 
 #CXX=g++49
 CXX=clang++
-CXXFLAGS=-Wall -DDEBUG $(INCLUDE)
+CXXFLAGS=-Wall -std=c++11 -DDEBUG $(INCLUDE)
 
 #CC=gcc49
 CC=clang
