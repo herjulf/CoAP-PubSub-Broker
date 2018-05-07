@@ -618,7 +618,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
     bool resource_found = true;
     if (resource == NULL) {
         response->setCode(CoapPDU::COAP_NOT_FOUND);
-        response->setContentFormat(resource->ct);
+        //response->setContentFormat(resource->ct);
         resource_found = false;
     }
     
@@ -644,24 +644,26 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                 char payload[payload_str.length()];
                 std::strcpy(payload, payload_str.c_str());
                 response->setCode(code);
-                response->setContentFormat(resource->ct);
-                if (code != CoapPDU::COAP_NO_CONTENT)
+                if (code != CoapPDU::COAP_NO_CONTENT) {
+                    response->setContentFormat(resource->ct);
                     response->setPayload((uint8_t*)payload, strlen(payload));
+                }
                 break;
             }
             case CoapPDU::COAP_POST: {
                 char* payload = NULL;
                 CoapPDU::Code code = post_create_handler(resource, (const char*)recvPDU->getPayloadPointer(), payload, params, q);
                 response->setCode(code);
-                response->setContentFormat(resource->ct);
-                if (payload != NULL)
+                if (payload != NULL) {
+                    response->setContentFormat(CoapPDU::COAP_CONTENT_FORMAT_APP_LINK);
                     response->setPayload((uint8_t*)payload, strlen(payload));
+                }
                 break;
             }
             case CoapPDU::COAP_PUT: {
                 CoapPDU::Code code = put_publish_handler(resource, recvPDU);
                 response->setCode(code);
-                response->setContentFormat(resource->ct);
+                //response->setContentFormat(resource->ct);
                 publish_to_all = true;
                 break;
              }
