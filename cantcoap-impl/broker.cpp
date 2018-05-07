@@ -127,14 +127,14 @@ void find_resource_by_rt(const char* rt, Resource* head, struct Item<Resource*>*
         bool head_removed = false;
         
         while (current) {
-            if (current->val->rt != NULL && strcmp(current->val->rt, rt) != 0) {
+            if (current->val->rt == NULL || strcmp(current->val->rt, rt) != 0) {
                 struct Item<Resource*>* tmp = current->next;
                 delete current;
                 current = tmp;
                 
                 if (is_head) {
                     item = current;
-                        head_removed = true;
+                    head_removed = true;
                 }
             } else {
                 current = current->next;
