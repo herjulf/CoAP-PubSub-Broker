@@ -325,7 +325,7 @@ CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &paylo
 CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* recvAddr, std::stringstream* &payload, bool subscribe) {
     if (resource->children != NULL)
         return CoapPDU::COAP_NOT_FOUND;    
-    
+    payload = new std::stringstream(); 
     CoapPDU::CoapOption* options = pdu->getOptions();
     int num_options = pdu->getNumOptions();
     bool ct_exists = false;
