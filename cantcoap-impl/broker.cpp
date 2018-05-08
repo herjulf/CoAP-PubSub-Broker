@@ -661,7 +661,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                 std::stringstream* payload_stream = NULL;
                 CoapPDU::Code code = get_handler(resource, recvPDU, recvAddr, payload_stream, params, q);
                 response->setCode(code);
-                if (code != CoapPDU::COAP_NO_CONTENT && code != CoapPDU::COAP_NOT_FOUND) {
+                if (code == CoapPDU::COAP_CONTENT) {
                     std::string payload_str = payload_stream->str();
                     char payload[payload_str.length()];
                     std::strcpy(payload, payload_str.c_str());
@@ -726,7 +726,6 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
     );
     
     delete response;
-    
     if (publish_to_all) {
         recvPDU->setContentFormat(resource->ct);
         recvPDU->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
