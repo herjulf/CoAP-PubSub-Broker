@@ -40,12 +40,8 @@ struct Item {
     struct Item<T>* next;
 };
 
-//typedef struct Item<std::iterator<struct std::bidirectional_iterator_tag, std::pair<const sockaddr_in, struct SubscriberInfo>>> SubItem;
-
 struct SubscriberInfo {
     uint16_t subscriptions;
-    uint32_t observe;
-    uint64_t token;
 };
 
 static bool subscriber_compare(const sockaddr_in& a, const sockaddr_in& b) {
@@ -65,7 +61,13 @@ struct SubscriberComparator {
     }
 };
 
-typedef struct Item<std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator>::iterator> SubItem;
+//typedef struct Item<std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator>::iterator> SubItem;
+typedef struct SubItem {
+    std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator>::iterator it;
+    uint32_t observe;
+    uint64_t token;
+    struct SubItem* next;
+} SubItem;
 
 // All uri's, rt's and val's should be dynamically allocated
 typedef struct Resource {
@@ -323,7 +325,7 @@ CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &paylo
 }
 
 CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* recvAddr, std::stringstream* &payload, bool subscribe) {
-    if (resource->children != NULL)
+    if (resource->ct == CoapPDU::COAP_CONTENT_FORMAT_APP_LINK)
         return CoapPDU::COAP_NOT_FOUND;    
     payload = new std::stringstream(); 
     CoapPDU::CoapOption* options = pdu->getOptions();
@@ -350,12 +352,14 @@ CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct 
         return CoapPDU::COAP_BAD_REQUEST;
     
     bool already_subscribed = false;
-    if (subscribers.count(*recvAddr) > 0) {
-        SubItem* sub = resource->subs;
+	bool sub_exists = subscribers.count(*recvAddr) > 0 ? true : false;
+    SubItem* sub = NULL;
+    if (sub_exists) {
+        sub = resource->subs;
         SubItem* prev = sub;
         while (sub != NULL) {
-            if (sub->val->first.sin_addr.s_addr == recvAddr->sin_addr.s_addr 
-                && sub->val->first.sin_port == recvAddr->sin_port) {
+            if (sub->it->first.sin_addr.s_addr == recvAddr->sin_addr.s_addr 
+                && sub->it->first.sin_port == recvAddr->sin_port) {
                 already_subscribed = true;
                 
                 if (!subscribe) {
@@ -380,38 +384,29 @@ CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct 
         subscriber.subscriptions--;
         if (subscriber.subscriptions == 0)
             subscribers.erase(*recvAddr);
-        /*SubItem* current = resource->subs;
-        SubItem* prev = current;
-        while (current) {
-            if (!subscriber_compare(current->val->first,*recvAddr) && !subscriber_compare(*recvAddr,current->val->first)) {
-                
-                break;
-            }
-            prev = current;
-            current = current->next;
-        }*/
-    } else if (already_subscribed) {
+    } else if (!already_subscribed && subscribe) {
         struct SubscriberInfo& subscriber = subscribers[*recvAddr];
-        subscriber.subscriptions++;
-        subscriber.observe++;
-        subscriber.observe &= 0x7FFFFF; // TODO: Implement it differently
-    } else {
-        auto it = subscribers.find(*recvAddr);
-        struct SubscriberInfo& subscriber = it->second;
-        subscriber.subscriptions = 0;
-        subscriber.token = 0;
-        int len = pdu->getTokenLength();
-        uint8_t* token_pointer = pdu->getTokenPointer();
-        while (len-- > 0) {
-            subscriber.token += *token_pointer << len;
-            token_pointer++;
-        }
-        subscriber.observe = 0; // TODO: Implement it differently
         
         SubItem* new_item = new SubItem;
-        new_item->val = it;
+		// TODO: Use this function instead of count() for setting sub_exists
+        new_item->it = subscribers.find(*recvAddr);	
         new_item->next = resource->subs;
         resource->subs = new_item;
+		
+		if (!sub_exists) {
+			subscriber.subscriptions = 1;
+			
+			new_item->token = 0;
+			int len = pdu->getTokenLength();
+			uint8_t* token_pointer = pdu->getTokenPointer();
+			while (len-- > 0) {
+				new_item->token += *token_pointer << len;
+				token_pointer++;
+			}
+			new_item->observe = 0; // TODO: Implement it differently						
+		} else {
+			subscriber.subscriptions++;
+		}
     }
     
     if (resource->val != NULL) {
@@ -453,6 +448,9 @@ CoapPDU::Code get_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* 
 }
 
 CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &payload, struct yuarel_param* queries, int num_queries) {
+    if (resource->ct != CoapPDU::COAP_CONTENT_FORMAT_APP_LINK)
+        return CoapPDU::COAP_BAD_REQUEST;
+    
     char * p = strchr(in, '<');
     int start = (int)(p-in);
     p = strchr(in, '>');
@@ -508,13 +506,12 @@ CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &pay
     new_resource->subs = NULL;
     
     payload = resource_uri;
-    update_discovery(discover); // TODO Behöver vi det?
+    // update_discovery(discover);
     return CoapPDU::COAP_CREATED;
 }
 
 CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
-    // TODO: return COAP_NOT_FOUND?
-    if (resource->children != NULL)
+    if (resource->ct == CoapPDU::COAP_CONTENT_FORMAT_APP_LINK)
         return CoapPDU::COAP_NOT_FOUND;     
 
     // Retrieve ct through getOptions
@@ -563,9 +560,9 @@ void remove_all_resources(Resource* resource, bool is_head) {
     SubItem* sub = resource->subs;
     //sockaddr_in* key = sub->val->first;
     while (sub != NULL) {
-        struct SubscriberInfo& val = sub->val->second;
+        struct SubscriberInfo& val = sub->it->second;
         if (--val.subscriptions == 0)
-            subscribers.erase(sub->val->first);
+            subscribers.erase(sub->it->first);
         sub = sub->next;
     }
     
@@ -758,14 +755,19 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
         recvPDU->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
         SubItem* subscriber = resource->subs;
         while (subscriber != NULL) {
+            recvPDU->setToken((uint8_t*)&subscriber->token, 8);    // TODO: improve this; token need not be 8 bytes
+            recvPDU->addOption(CoapPDU::COAP_OPTION_OBSERVE, 3, (uint8_t*)&subscriber->observe);
             sendto(
                 sockfd,
                 recvPDU->getPDUPointer(),
                 recvPDU->getPDULength(),
                 0,
-                (struct sockaddr*) &(subscriber->val->first),
+                (struct sockaddr*) &(subscriber->it->first),
                 addrLen
             );
+            
+            subscriber->observe++;
+            subscriber->observe &= 0x7FFFFF; // TODO: Implement it differently
             subscriber = subscriber->next;
         }   
     }
