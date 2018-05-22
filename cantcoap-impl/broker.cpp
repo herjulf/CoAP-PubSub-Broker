@@ -777,7 +777,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
     //delete response;
     if (publish_to_all) {
         response->setContentFormat(resource->ct);
-        response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
+        response->setType(CoapPDU::COAP_CONFIRMABLE);
         response->setCode(CoapPDU::COAP_CONTENT);
         response->setPayload(recvPDU->getPayloadPointer(), recvPDU->getPayloadLength());
         SubItem* subscriber = resource->subs;
