@@ -66,6 +66,7 @@ typedef struct SubItem {
     std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator>::iterator it;
     uint32_t observe;
     uint64_t token;
+    int token_len;
     struct SubItem* next;
 } SubItem;
 
@@ -324,7 +325,7 @@ CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &paylo
     return CoapPDU::COAP_CONTENT;
 }
 
-CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* recvAddr, std::stringstream* &payload, bool subscribe) {
+CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* recvAddr, CoapPDU* response, std::stringstream* &payload, bool subscribe) {
     if (resource->ct == CoapPDU::COAP_CONTENT_FORMAT_APP_LINK)
         return CoapPDU::COAP_NOT_FOUND;    
     payload = new std::stringstream(); 
@@ -348,13 +349,14 @@ CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct 
         }
     }
     
-    if (!ct_exists)
-        return CoapPDU::COAP_BAD_REQUEST;
+    //if (!ct_exists)
+    //    return CoapPDU::COAP_BAD_REQUEST;
     
     bool already_subscribed = false;
-	bool sub_exists = subscribers.count(*recvAddr) > 0 ? true : false;
+	//bool sub_exists = subscribers.count(*recvAddr) > 0 ? true : false;
+	auto it = subscribers.find(*recvAddr);
     SubItem* sub = NULL;
-    if (sub_exists) {
+    if (it != subscribers.end()) {
         sub = resource->subs;
         SubItem* prev = sub;
         while (sub != NULL) {
@@ -384,29 +386,52 @@ CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct 
         subscriber.subscriptions--;
         if (subscriber.subscriptions == 0)
             subscribers.erase(*recvAddr);
-    } else if (!already_subscribed && subscribe) {
-        struct SubscriberInfo& subscriber = subscribers[*recvAddr];
-        
-        SubItem* new_item = new SubItem;
-		// TODO: Use this function instead of count() for setting sub_exists
-        new_item->it = subscribers.find(*recvAddr);	
-        new_item->next = resource->subs;
-        resource->subs = new_item;
-		
-		if (!sub_exists) {
-			subscriber.subscriptions = 1;
+    } else if (already_subscribed || subscribe) {
+        if (!already_subscribed && subscribe) {
+            struct SubscriberInfo& subscriber = subscribers[*recvAddr];
+            
+            SubItem* new_item = new SubItem;
+            sub = new_item;
+		    // TODO: Use this function instead of count() for setting sub_exists
+		    if (it == subscribers.end())
+                new_item->it = subscribers.find(*recvAddr);
+            else
+                new_item->it = it;
+            new_item->next = resource->subs;
+            resource->subs = new_item;
 			
-			new_item->token = 0;
-			int len = pdu->getTokenLength();
-			uint8_t* token_pointer = pdu->getTokenPointer();
-			while (len-- > 0) {
-				new_item->token += *token_pointer << len;
-				token_pointer++;
-			}
-			new_item->observe = 0; // TODO: Implement it differently						
-		} else {
-			subscriber.subscriptions++;
-		}
+		    new_item->token = 0;
+		    int len = pdu->getTokenLength();
+		    uint8_t* token_pointer = pdu->getTokenPointer();
+		    new_item->token_len = len;
+		    int i = 0;
+		    while (i < len) {
+			    new_item->token += *token_pointer << 8*i;
+			    token_pointer++;
+			    i++;
+		    }
+		    new_item->observe = 0; // TODO: Implement it differently
+		
+		    if (it == subscribers.end()) {
+			    subscriber.subscriptions = 1;						
+		    } else {
+			    subscriber.subscriptions++;
+		    }
+        } else if (already_subscribed && subscribe) {
+            sub->token = 0;
+            sub->token_len = pdu->getTokenLength();
+            uint8_t* token_pointer = pdu->getTokenPointer();
+            int i = 0;
+		    while (i < sub->token_len) {
+			    sub->token += *token_pointer << 8*i;
+			    token_pointer++;
+			    i++;
+		    }
+        }
+        
+        response->addOption(CoapPDU::COAP_OPTION_OBSERVE, 1, (uint8_t*)&sub->observe); // TODO FIX 1 to 3
+        sub->observe++;
+        sub->observe &= 0x7FFFFF;
     }
     
     if (resource->val != NULL) {
@@ -417,7 +442,7 @@ CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct 
     return CoapPDU::COAP_NO_CONTENT;
 }
 
-CoapPDU::Code get_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* recvAddr, std::stringstream* &payload, struct yuarel_param* queries, int num_queries) {
+CoapPDU::Code get_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* recvAddr, CoapPDU* response, std::stringstream* &payload, struct yuarel_param* queries, int num_queries) {
     CoapPDU::CoapOption* options = pdu->getOptions();
     int num_options = pdu->getNumOptions();
     bool is_subscribe = false;
@@ -441,9 +466,9 @@ CoapPDU::Code get_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* 
     }
     
     if (is_subscribe)
-        return get_subscription_handler(resource, pdu, recvAddr, payload, true);
+        return get_subscription_handler(resource, pdu, recvAddr, response, payload, true);
     else if (is_unsubscribe)
-        return get_subscription_handler(resource, pdu, recvAddr, payload, false);
+        return get_subscription_handler(resource, pdu, recvAddr, response, payload, false);
     return get_discover_handler(resource, payload, queries, num_queries);
 }
 
@@ -683,7 +708,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
             }
             case CoapPDU::COAP_GET: {
                 std::stringstream* payload_stream = NULL;
-                CoapPDU::Code code = get_handler(resource, recvPDU, recvAddr, payload_stream, params, q);
+                CoapPDU::Code code = get_handler(resource, recvPDU, recvAddr, response, payload_stream, params, q);
                 response->setCode(code);
                 if (code == CoapPDU::COAP_CONTENT) {
                     std::string payload_str = payload_stream->str();
@@ -749,18 +774,20 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
         addrLen
     );
     
-    delete response;
+    //delete response;
     if (publish_to_all) {
-        recvPDU->setContentFormat(resource->ct);
-        recvPDU->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
+        response->setContentFormat(resource->ct);
+        response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
+        response->setCode(CoapPDU::COAP_CONTENT);
+        response->setPayload(recvPDU->getPayloadPointer(), recvPDU->getPayloadLength());
         SubItem* subscriber = resource->subs;
         while (subscriber != NULL) {
-            recvPDU->setToken((uint8_t*)&subscriber->token, 8);    // TODO: improve this; token need not be 8 bytes
-            recvPDU->addOption(CoapPDU::COAP_OPTION_OBSERVE, 3, (uint8_t*)&subscriber->observe);
+            response->setToken((uint8_t*)&subscriber->token, subscriber->token_len);
+            response->addOption(CoapPDU::COAP_OPTION_OBSERVE, 1, (uint8_t*)&subscriber->observe); // TODO FIX 1 to 3
             sendto(
                 sockfd,
-                recvPDU->getPDUPointer(),
-                recvPDU->getPDULength(),
+                response->getPDUPointer(),
+                response->getPDULength(),
                 0,
                 (struct sockaddr*) &(subscriber->it->first),
                 addrLen
@@ -772,6 +799,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
         }   
     }
     
+    delete response;
     if(sent < 0) {
         return 1;
     }
