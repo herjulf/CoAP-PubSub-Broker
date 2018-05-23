@@ -101,26 +101,29 @@ void get_all_topics(struct Item<Resource*>* &item, Resource* head) {
     }
 }
 
-Resource* find_resource(const char* uri, Resource* head) {
+Resource* find_resource(const char* uri, Resource* head, Resource** parent, Resource** prev) {
     Resource* node = head;
+    Resource* p = NULL;
     while (node != NULL) {
-        //if (strcmp(uri, node->uri) == 0)
-        //    return node;
         if (strstr(uri, node->uri) == uri) {
             char c = uri[strlen(node->uri)];
-            if (c == '\0')
+            if (c == '\0') {
+                *parent = head;
+                *prev = p;
                 return node;
+            }
             if (c == '/')
                 break;
         }
+        p = node;
         node = node->next;
     }
 
     if (node != NULL) {
-        //Resource* node2 = find_resource(uri, node->children);
-        //node = node2 != NULL ? node2 : node;
-        node = find_resource(uri, node->children);
+        node = find_resource(uri, node->children, parent, prev);
     }
+    *prev = p;
+    *parent = head;
     return node;
 }
 
@@ -583,12 +586,18 @@ void remove_all_resources(Resource* resource, bool is_head) {
     delete[] resource->val;
     
     SubItem* sub = resource->subs;
+    SubItem* rm_sub;
     //sockaddr_in* key = sub->val->first;
     while (sub != NULL) {
         struct SubscriberInfo& val = sub->it->second;
-        if (--val.subscriptions == 0)
+        if (--val.subscriptions == 0) {
             subscribers.erase(sub->it->first);
-        sub = sub->next;
+            rm_sub = sub;
+            sub = sub->next;
+            delete rm_sub;
+        } else {
+            sub = sub->next;
+        }
     }
     
     if (!is_head) { 
@@ -604,7 +613,13 @@ void remove_all_resources(Resource* resource, bool is_head) {
     }
 }
 
-CoapPDU::Code delete_remove_handler(Resource* resource) {
+CoapPDU::Code delete_remove_handler(Resource* resource, Resource* parent, Resource* prev) {
+    if (parent != NULL && parent->children == resource) {
+        parent->children = resource->next;
+    } else if (prev != NULL) {
+        prev->next = resource->next;
+    }
+    
     remove_all_resources(resource, true);
     return CoapPDU::COAP_DELETED;
 }
@@ -670,12 +685,14 @@ void test_make_resources() {
 
 int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockaddr_in* recvAddr) {
     Resource* resource = NULL;
+    Resource* parent = NULL;
+    Resource* prev = NULL;
     if (strcmp(uri_buffer, PS_DISCOVERY) == 0) {
         resource = ps_discover;
     } else if (strstr(uri_buffer, DISCOVERY) != NULL) {
         resource = discover;
     } else {
-        resource = find_resource(uri_buffer, head);
+        resource = find_resource(uri_buffer, head, &parent, &prev);
     }
     
     CoapPDU *response = new CoapPDU();
@@ -738,7 +755,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                 break;
              }
             case CoapPDU::COAP_DELETE: {
-                CoapPDU::Code code = delete_remove_handler(resource);
+                CoapPDU::Code code = delete_remove_handler(resource, parent, prev);
                 response->setCode(code);
                 // length 9 or 10 (including null)?
                 // response->setPayload((uint8_t*) "DELETE OK", 9);
