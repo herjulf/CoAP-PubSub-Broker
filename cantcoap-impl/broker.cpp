@@ -331,7 +331,7 @@ CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct 
     if (resource->ct == CoapPDU::COAP_CONTENT_FORMAT_APP_LINK)
         return CoapPDU::COAP_NOT_FOUND;    
     payload = new std::stringstream(); 
-    CoapPDU::CoapOption* options = pdu->getOptions();
+/*    CoapPDU::CoapOption* options = pdu->getOptions();
     int num_options = pdu->getNumOptions();
     bool ct_exists = false;
     while (num_options-- > 0) {
@@ -351,9 +351,9 @@ CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct 
         }
     }
     
-    //if (!ct_exists)
-    //    return CoapPDU::COAP_BAD_REQUEST;
-    
+    if (!ct_exists)
+        return CoapPDU::COAP_BAD_REQUEST;
+*/   
     bool already_subscribed = false;
 	auto it = subscribers.find(*recvAddr);
     SubItem* sub = NULL;
@@ -586,7 +586,6 @@ void remove_all_resources(Resource* resource, bool is_head, int sockfd, int addr
     SubItem* sub = resource->subs;
     SubItem* rm_sub;
     CoapPDU* response = new CoapPDU();
-    response->setContentFormat(resource->ct);
     response->setType(CoapPDU::COAP_CONFIRMABLE);
     response->setCode(CoapPDU::COAP_NOT_FOUND);
     while (sub != NULL) {
@@ -603,12 +602,10 @@ void remove_all_resources(Resource* resource, bool is_head, int sockfd, int addr
         struct SubscriberInfo& val = sub->it->second;
         if (--val.subscriptions == 0) {
             subscribers.erase(sub->it->first);
-            rm_sub = sub;
-            sub = sub->next;
-            delete rm_sub;
-        } else {
-            sub = sub->next;
-        }
+        } 
+	rm_sub = sub;
+	sub = sub->next;
+	delete rm_sub;
     }
     delete response;
     
@@ -626,6 +623,7 @@ void remove_all_resources(Resource* resource, bool is_head, int sockfd, int addr
 }
 
 CoapPDU::Code delete_remove_handler(Resource* resource, Resource* parent, Resource* prev, int sockfd, socklen_t addrLen) {
+    std::cerr<<"resource="<<resource<<", parent="<<parent<<", prev="<<prev<<std::endl;
     if (parent != NULL && parent->children == resource) {
         parent->children = resource->next;
     } else if (prev != NULL) {
