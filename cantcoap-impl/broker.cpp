@@ -61,7 +61,6 @@ struct SubscriberComparator {
     }
 };
 
-//typedef struct Item<std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator>::iterator> SubItem;
 typedef struct SubItem {
     std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator>::iterator it;
     uint32_t observe;
@@ -70,7 +69,7 @@ typedef struct SubItem {
     struct SubItem* next;
 } SubItem;
 
-// All uri's, rt's and val's should be dynamically allocated
+// All uri's, rt's and val's must be dynamically allocated
 typedef struct Resource {
     const char* uri;
     const char* rt;
@@ -356,7 +355,6 @@ CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct 
     //    return CoapPDU::COAP_BAD_REQUEST;
     
     bool already_subscribed = false;
-	//bool sub_exists = subscribers.count(*recvAddr) > 0 ? true : false;
 	auto it = subscribers.find(*recvAddr);
     SubItem* sub = NULL;
     if (it != subscribers.end()) {
@@ -395,7 +393,7 @@ CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct 
             
             SubItem* new_item = new SubItem;
             sub = new_item;
-		    // TODO: Use this function instead of count() for setting sub_exists
+		    
 		    if (it == subscribers.end())
                 new_item->it = subscribers.find(*recvAddr);
             else
@@ -576,9 +574,9 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
     return CoapPDU::COAP_CHANGED;
 }
 
-void remove_all_resources(Resource* resource, bool is_head) {
+void remove_all_resources(Resource* resource, bool is_head, int sockfd, int addrLen) {
     if (resource->children != NULL) {
-        remove_all_resources(resource->children, false);
+        remove_all_resources(resource->children, false, sockfd, addrLen);
     }
     
     delete[] resource->uri;
@@ -587,8 +585,21 @@ void remove_all_resources(Resource* resource, bool is_head) {
     
     SubItem* sub = resource->subs;
     SubItem* rm_sub;
-    //sockaddr_in* key = sub->val->first;
+    CoapPDU* response = new CoapPDU();
+    response->setContentFormat(resource->ct);
+    response->setType(CoapPDU::COAP_CONFIRMABLE);
+    response->setCode(CoapPDU::COAP_NOT_FOUND);
     while (sub != NULL) {
+        response->setToken((uint8_t*)&sub->token, sub->token_len);
+        sendto(
+            sockfd,
+            response->getPDUPointer(),
+            response->getPDULength(),
+            0,
+            (struct sockaddr*) &(sub->it->first),
+            addrLen
+        );
+        
         struct SubscriberInfo& val = sub->it->second;
         if (--val.subscriptions == 0) {
             subscribers.erase(sub->it->first);
@@ -599,13 +610,14 @@ void remove_all_resources(Resource* resource, bool is_head) {
             sub = sub->next;
         }
     }
+    delete response;
     
     if (!is_head) { 
         Resource *p = resource->next, *q;
         delete resource;
         while (p != NULL) {
             q = p->next;
-            remove_all_resources(p, false);
+            remove_all_resources(p, false, sockfd, addrLen);
             p = q;
         }
     } else {
@@ -613,23 +625,18 @@ void remove_all_resources(Resource* resource, bool is_head) {
     }
 }
 
-CoapPDU::Code delete_remove_handler(Resource* resource, Resource* parent, Resource* prev) {
+CoapPDU::Code delete_remove_handler(Resource* resource, Resource* parent, Resource* prev, int sockfd, socklen_t addrLen) {
     if (parent != NULL && parent->children == resource) {
         parent->children = resource->next;
     } else if (prev != NULL) {
         prev->next = resource->next;
     }
     
-    remove_all_resources(resource, true);
+    remove_all_resources(resource, true, sockfd, addrLen);
     return CoapPDU::COAP_DELETED;
 }
 
-// =============== TEST ===============
-
-// CoAP PUBSUB Discovery
-// QUESTION: Citation marks around rt or not? Compare with Herjulf impl coap.c
-
-void test_make_resources() {
+void initialize() {
     ps_discover = new Resource;
     ps_discover->uri = PS_DISCOVERY; //?rt=core.ps;rt=core.ps.discover;ct=40";
     ps_discover->rt = NULL;
@@ -657,7 +664,7 @@ void test_make_resources() {
     ps->children = NULL;
     ps->subs = NULL;
 
-    Resource* temperature = new Resource;
+    /* Resource* temperature = new Resource;
     temperature->uri = "/ps/temperature";
     temperature->rt = "temperature";
     temperature->ct = CoapPDU::COAP_CONTENT_FORMAT_TEXT_PLAIN;
@@ -676,12 +683,11 @@ void test_make_resources() {
     humidity->subs = NULL;
 
     ps->children = temperature;
-    temperature->next = humidity;
+    temperature->next = humidity; */
     head = ps;
 
-    update_discovery(discover);
+    // update_discovery(discover);
 }
-// ============== /TEST ===============
 
 int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockaddr_in* recvAddr) {
     Resource* resource = NULL;
@@ -720,9 +726,6 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
         int q = yuarel_parse_query(queries, '&', params, OPT_NUM);
         
         switch(recvPDU->getCode()) {
-            case CoapPDU::COAP_EMPTY: { // TODO: send RST
-                break;
-            }
             case CoapPDU::COAP_GET: {
                 std::stringstream* payload_stream = NULL;
                 CoapPDU::Code code = get_handler(resource, recvPDU, recvAddr, response, payload_stream, params, q);
@@ -755,7 +758,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                 break;
              }
             case CoapPDU::COAP_DELETE: {
-                CoapPDU::Code code = delete_remove_handler(resource, parent, prev);
+                CoapPDU::Code code = delete_remove_handler(resource, parent, prev, sockfd, addrLen);
                 response->setCode(code);
                 // length 9 or 10 (including null)?
                 // response->setPayload((uint8_t*) "DELETE OK", 9);
@@ -764,22 +767,11 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
         }
     }
 
-// TODO IMPLEMENT NON-CONFIRMABLE
+    // TODO Is the switch statement redundant here?
     switch(recvPDU->getType()) {
         case CoapPDU::COAP_CONFIRMABLE:
                 response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
                 break;
-        /* TODO
-        case CoapPDU::COAP_NON_CONFIRMABLE:
-                // fel: response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
-                break;
-        case CoapPDU::COAP_ACKNOWLEDGEMENT:
-                break;
-        case CoapPDU::COAP_RESET:
-                break;
-        default:
-                return 1;
-    */
     };
 
     ssize_t sent = sendto(
@@ -831,9 +823,7 @@ int main(int argc, char **argv) {
         return -1;
     }
     
-    // ==== TEST ====
-    test_make_resources();
-    // === /TEST ====
+    initialize();
     
     char* str_address = argv[1];
     char* str_port = argv[2];
@@ -883,7 +873,9 @@ int main(int argc, char **argv) {
         // uri_buffer[recvURILen] = '\0';
         
         if(recvURILen > 0) {
-            handle_request(uri_buffer, recvPDU, sockfd, &recvAddr);
+            // TODO: What if it's an incoming CON message with code COAP_EMPTY? Must not ACK be sent back?
+            if (recvPDU->getType() == CoapPDU::COAP_CONFIRMABLE && recvPDU->getCode() != CoapPDU::COAP_EMPTY)
+                handle_request(uri_buffer, recvPDU, sockfd, &recvAddr);
         }
         
         // code 0 indicates an empty message, send RST
@@ -891,8 +883,8 @@ int main(int argc, char **argv) {
         if(recvPDU->getPDULength() == 0 || recvPDU->getCode() == 0) {
                 
         }
-	// Necessary to reset PDU to prevent garbage values residing in next message
-	recvPDU->reset();
+	    // Necessary to reset PDU to prevent garbage values residing in next message
+	    recvPDU->reset();
     }
     
     return 0;
