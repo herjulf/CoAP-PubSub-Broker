@@ -604,9 +604,9 @@ void remove_all_resources(Resource* resource, bool is_head, Resource* parent, Re
         if (--val.subscriptions == 0) {
             subscribers.erase(sub->it->first);
         } 
-	rm_sub = sub;
-	sub = sub->next;
-	delete rm_sub;
+	    rm_sub = sub;
+	    sub = sub->next;
+	    delete rm_sub;
     }
     delete response;
     
@@ -621,7 +621,7 @@ void remove_all_resources(Resource* resource, bool is_head, Resource* parent, Re
         delete resource;
         while (p != NULL) {
             q = p->next;
-            remove_all_resources(p, false, parent, NULL, sockfd, addrLen);
+            remove_all_resources(p, false, parent, prev, sockfd, addrLen);
             p = q;
         }
     } else {
