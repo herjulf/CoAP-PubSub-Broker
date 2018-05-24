@@ -107,7 +107,7 @@ Resource* find_resource(const char* uri, Resource* head, Resource** parent, Reso
         if (strstr(uri, node->uri) == uri) {
             char c = uri[strlen(node->uri)];
             if (c == '\0') {
-                *parent = head;
+                // *parent = head;
                 *prev = p;
                 return node;
             }
@@ -119,6 +119,7 @@ Resource* find_resource(const char* uri, Resource* head, Resource** parent, Reso
     }
 
     if (node != NULL && node->children != NULL) {
+	*parent = head;
         node = find_resource(uri, node->children, parent, prev);
     } else if (node == NULL) {
 	*prev = p;
@@ -626,6 +627,7 @@ void remove_all_resources(Resource* resource, bool is_head, Resource* parent, Re
         }
     } else {
         delete resource;
+	// std::cerr<<"**************** is_head == TRUE Deleted resource in ELSE \n";
     }
 }
 
@@ -703,7 +705,12 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
         resource = discover;
     } else {
         resource = find_resource(uri_buffer, head, &parent, &prev);
-    }
+/*	std::cerr<<"resource="<<resource<<", parent="<<parent<<", prev="<<prev<<std::endl;
+    if(parent != NULL)
+	std::cerr<<"************parent->uri: "<<parent->uri<<"\n";
+    if(prev != NULL)
+	std::cerr<<"************prev->uri: "<<prev->uri<<"\n"; */
+    } 
     CoapPDU *response = new CoapPDU();
     response->setVersion(1);
     response->setMessageID(recvPDU->getMessageID()); // OBS
