@@ -575,9 +575,9 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
     return CoapPDU::COAP_CHANGED;
 }
 
-void remove_all_resources(Resource* resource, bool is_head, int sockfd, int addrLen) {
+void remove_all_resources(Resource* resource, bool is_head, Resource* parent, Resource* prev, int sockfd, int addrLen) {
     if (resource->children != NULL) {
-        remove_all_resources(resource->children, false, sockfd, addrLen);
+        remove_all_resources(resource->children, false, resource, NULL, sockfd, addrLen);
     }
     
     delete[] resource->uri;
@@ -610,12 +610,18 @@ void remove_all_resources(Resource* resource, bool is_head, int sockfd, int addr
     }
     delete response;
     
+    if (parent != NULL && parent->children == resource) {
+        parent->children = resource->next;
+    } else if (prev != NULL) {
+        prev->next = resource->next;
+    }
+    
     if (!is_head) { 
         Resource *p = resource->next, *q;
         delete resource;
         while (p != NULL) {
             q = p->next;
-            remove_all_resources(p, false, sockfd, addrLen);
+            remove_all_resources(p, false, parent, NULL, sockfd, addrLen);
             p = q;
         }
     } else {
@@ -624,13 +630,13 @@ void remove_all_resources(Resource* resource, bool is_head, int sockfd, int addr
 }
 
 CoapPDU::Code delete_remove_handler(Resource* resource, Resource* parent, Resource* prev, int sockfd, socklen_t addrLen) {
-    if (parent != NULL && parent->children == resource) {
+    /*if (parent != NULL && parent->children == resource) {
         parent->children = resource->next;
     } else if (prev != NULL) {
         prev->next = resource->next;
-    }
+    }*/
     
-    remove_all_resources(resource, true, sockfd, addrLen);
+    remove_all_resources(resource, true, parent, prev, sockfd, addrLen);
     return CoapPDU::COAP_DELETED;
 }
 
