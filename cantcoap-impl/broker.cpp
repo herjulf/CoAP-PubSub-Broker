@@ -118,11 +118,12 @@ Resource* find_resource(const char* uri, Resource* head, Resource** parent, Reso
         node = node->next;
     }
 
-    if (node != NULL) {
+    if (node != NULL && node->children != NULL) {
         node = find_resource(uri, node->children, parent, prev);
+    } else if (node == NULL) {
+	*prev = p;
+	*parent = head;
     }
-    *prev = p;
-    *parent = head;
     return node;
 }
 
@@ -623,7 +624,6 @@ void remove_all_resources(Resource* resource, bool is_head, int sockfd, int addr
 }
 
 CoapPDU::Code delete_remove_handler(Resource* resource, Resource* parent, Resource* prev, int sockfd, socklen_t addrLen) {
-    std::cerr<<"resource="<<resource<<", parent="<<parent<<", prev="<<prev<<std::endl;
     if (parent != NULL && parent->children == resource) {
         parent->children = resource->next;
     } else if (prev != NULL) {
@@ -698,7 +698,6 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
     } else {
         resource = find_resource(uri_buffer, head, &parent, &prev);
     }
-    
     CoapPDU *response = new CoapPDU();
     response->setVersion(1);
     response->setMessageID(recvPDU->getMessageID()); // OBS
