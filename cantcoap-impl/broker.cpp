@@ -795,12 +795,14 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
     
     //delete response;
     if (publish_to_all) {
-        response->setContentFormat(resource->ct);
-        response->setType(CoapPDU::COAP_CONFIRMABLE);
-        response->setCode(CoapPDU::COAP_CONTENT);
-        response->setPayload(recvPDU->getPayloadPointer(), recvPDU->getPayloadLength());
         SubItem* subscriber = resource->subs;
         while (subscriber != NULL) {
+            response->setVersion(1);
+            response->setMessageID(recvPDU->getMessageID()); // OBS
+            response->setContentFormat(resource->ct);
+            response->setType(CoapPDU::COAP_CONFIRMABLE);
+            response->setCode(CoapPDU::COAP_CONTENT);
+            response->setPayload(recvPDU->getPayloadPointer(), recvPDU->getPayloadLength());
             response->setToken((uint8_t*)&subscriber->token, subscriber->token_len);
             response->addOption(CoapPDU::COAP_OPTION_OBSERVE, 1, (uint8_t*)&subscriber->observe); // TODO FIX 1 to 3
             sendto(
@@ -812,6 +814,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                 addrLen
             );
             
+            response->reset();
             subscriber->observe++;
             subscriber->observe &= 0x7FFFFF; // TODO: Implement it differently
             subscriber = subscriber->next;
