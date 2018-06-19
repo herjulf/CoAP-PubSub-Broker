@@ -479,11 +479,11 @@ CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &pay
     if (resource->ct != CoapPDU::COAP_CONTENT_FORMAT_APP_LINK)
         return CoapPDU::COAP_BAD_REQUEST;
     
-    char * p = strchr(in, '<');
+    char * p = (char *) strchr(in, '<');
     int start = (int)(p-in);
-    p = strchr(in, '>');
+    p = (char *) strchr(in, '>');
     int end = (int)(p-in);
-    p = strchr(in, ';');
+    p = (char *) strchr(in, ';');
     
     int uri_len = strlen(resource->uri);
     int len = end-start+uri_len+1;
