@@ -8,6 +8,8 @@
 #include <cstring>
 #include <cstdlib>
 #include <stdio.h>
+#include <sys/time.h>
+#include <sys/select.h>
 #include <sstream>
 #include <iterator>
 #include <iostream>
@@ -830,6 +832,9 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
 }
 
 int main(int argc, char **argv) { 
+
+  fd_set read_fds, write_fds;
+
     if (argc < 3)
     {
         printf("USAGE: %s address port\n", argv[0]);
@@ -864,41 +869,64 @@ int main(int argc, char **argv) {
     CoapPDU *recvPDU = new CoapPDU((uint8_t*)buffer, BUF_LEN, BUF_LEN);
     
     while (1) {
+
+      FD_ZERO(&read_fds);
+      FD_ZERO(&write_fds);
+      FD_SET(sockfd, &read_fds);
+
+      struct timeval tv;
+      tv.tv_sec = 10;
+      tv.tv_usec = 0;
+
+      int n = select(sockfd+1, &read_fds, &write_fds, 0, &tv);
+
+      if(n < 0) {
+	perror("ERROR Server : select()\n");
+	close(sockfd);
+	exit(1);
+      }
+      if (n == 0)  {
+	      /* TIMEOUT */
+	printf("Timeout\n");
+	continue;
+      }
+      if(FD_ISSET(sockfd, &read_fds)) {
         ret = recvfrom(sockfd, &buffer, BUF_LEN, 0, (sockaddr*)&recvAddr, &recvAddrLen);
+	FD_CLR(sockfd, &read_fds);
         if (ret == -1) {
-            return -1;
+	  return -1;
         }
         
         if(ret > BUF_LEN) {
-            continue;
+	  continue;
         }
         
         recvPDU->setPDULength(ret);
         if(recvPDU->validate() != 1) {
-            continue;
+	  continue;
         }
         
         // depending on what this is, maybe call callback function
         if(recvPDU->getURI(uri_buffer, URI_BUF_LEN, &recvURILen) != 0) {
-            continue;
+	  continue;
         }
         
         // uri_buffer[recvURILen] = '\0';
         
         if(recvURILen > 0) {
-            // TODO: What if it's an incoming CON message with code COAP_EMPTY? Must not ACK be sent back?
-            if (recvPDU->getType() == CoapPDU::COAP_CONFIRMABLE && recvPDU->getCode() != CoapPDU::COAP_EMPTY)
-                handle_request(uri_buffer, recvPDU, sockfd, &recvAddr);
+	  // TODO: What if it's an incoming CON message with code COAP_EMPTY? Must not ACK be sent back?
+	  if (recvPDU->getType() == CoapPDU::COAP_CONFIRMABLE && recvPDU->getCode() != CoapPDU::COAP_EMPTY)
+	    handle_request(uri_buffer, recvPDU, sockfd, &recvAddr);
         }
-        
+
         // code 0 indicates an empty message, send RST
         // && or ||, pdu length is size of whole packet?
         if(recvPDU->getPDULength() == 0 || recvPDU->getCode() == 0) {
-                
+
         }
-	    // Necessary to reset PDU to prevent garbage values residing in next message
-	    recvPDU->reset();
+	// Necessary to reset PDU to prevent garbage values residing in next message
+	recvPDU->reset();
+      }
     }
-    
     return 0;
 }
