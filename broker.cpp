@@ -2,6 +2,7 @@
 #include "nethelper.h"
 #include <netdb.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,6 +91,8 @@ static Resource* head;
 static Resource* ps_discover;
 static Resource* discover;
 static std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator> subscribers;
+
+int background = 0; // Run process as daemon
 
 void get_all_topics(struct Item<Resource*>* &item, Resource* head) {
     if (head->children != NULL) {
@@ -891,6 +894,37 @@ int main(int argc, char **argv) {
       struct timeval tv;
       tv.tv_sec = GC_TIMEOUT;
       tv.tv_usec = 0;
+
+
+      if(background) {
+	pid_t pid, sid;
+	pid = fork();
+
+	if (pid < 0) {
+	  std::cerr << "Failed to fork, error code [" << pid << "]. Exitting";
+	  return EXIT_FAILURE;
+	} else if(pid > 0) {
+	  return EXIT_SUCCESS;
+      }
+
+	umask(0);
+	/* Set new signature ID for the child */
+
+	sid = setsid();
+
+	if (sid < 0) {
+	  std::cerr << "Failed to setsid, error code [" << sid << "]. Exiting";
+	  return EXIT_FAILURE;
+	}
+
+	if ((chdir("/")) < 0) {
+	  std::cerr << "Failed to change directory to /. Exiting";
+	  return EXIT_FAILURE;
+	}
+	close(STDIN_FILENO);
+	close(STDOUT_FILENO);
+	close(STDERR_FILENO);
+      }
 
       while (1) {
 
