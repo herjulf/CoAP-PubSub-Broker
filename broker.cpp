@@ -91,6 +91,21 @@ static Resource* ps_discover;
 static Resource* discover;
 static std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator> subscribers;
 
+void get_all_topics(struct Item<Resource*>* &item, Resource* head) {
+    if (head->children != NULL) {
+        get_all_topics(item, head->children);
+    } else {
+        struct Item<Resource*>* new_item = new struct Item<Resource*>();
+        new_item->val = head;
+        new_item->next = item;
+        item = new_item;
+    }
+
+    if (head->next != NULL) {
+        get_all_topics(item, head->next);
+    }
+}
+
 Resource* find_resource(const char* uri, Resource* head, Resource** parent, Resource** prev) {
     Resource* node = head;
     Resource* p = NULL;
