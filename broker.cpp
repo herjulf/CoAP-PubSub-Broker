@@ -22,6 +22,9 @@
 #define PS_DISCOVERY "/.well-known/core?rt=core.ps"
 #define DISCOVERY "/.well-known/core"
 
+#define GC_TIMEOUT 1
+#define MAX_AGE_DEFAULT 60
+
 /* Testing
 coap get "coap://127.0.0.1:5683/.well-known/core?ct=0&rt=temperature"
 coap get "coap://127.0.0.1:5683/.well-known/core?rt=temperature&ct=1"
@@ -77,6 +80,7 @@ typedef struct Resource {
     const char* rt;
     CoapPDU::ContentFormat ct;
     const char* val;
+    uint32_t expire;
     Resource * children;
     Resource * next;
     SubItem* subs;
@@ -86,21 +90,6 @@ static Resource* head;
 static Resource* ps_discover;
 static Resource* discover;
 static std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator> subscribers;
-
-void get_all_topics(struct Item<Resource*>* &item, Resource* head) {
-    if (head->children != NULL) {
-        get_all_topics(item, head->children);
-    } else {
-        struct Item<Resource*>* new_item = new struct Item<Resource*>();
-        new_item->val = head;
-        new_item->next = item;
-        item = new_item;
-    }
-
-    if (head->next != NULL) {
-        get_all_topics(item, head->next);
-    }
-}
 
 Resource* find_resource(const char* uri, Resource* head, Resource** parent, Resource** prev) {
     Resource* node = head;
@@ -534,7 +523,6 @@ CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &pay
     resource->children = new_resource;
     new_resource->children = NULL;
     new_resource->subs = NULL;
-    
     payload = resource_uri;
     // update_discovery(discover);
     return CoapPDU::COAP_CREATED;
@@ -548,6 +536,9 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
     CoapPDU::CoapOption* options = pdu->getOptions();
     int num_options = pdu->getNumOptions();
     bool ct_exists = false;
+    bool maxage_exists = false;
+    uint32_t expire = 0;
+
     while (num_options-- > 0) {
         if (options[num_options].optionNumber == CoapPDU::COAP_OPTION_CONTENT_FORMAT) {
             ct_exists = true;
@@ -563,6 +554,16 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
                 return CoapPDU::COAP_NOT_FOUND;
             break;
         }
+
+        if (options[num_options].optionNumber == CoapPDU::COAP_OPTION_MAX_AGE) {
+            maxage_exists = true;
+            uint8_t* option_value = options[num_options].optionValuePointer;
+            for (int i = 0; i < options[num_options].optionValueLength; i++) {
+                expire <<= 8;
+                expire += *option_value;
+		option_value++;
+            }
+        }
     }
     
     if (!ct_exists) {
@@ -575,6 +576,11 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
     //const char* val = (const char*)pdu->getPayloadCopy();
     delete[] resource->val;
     resource->val = val;
+    if(maxage_exists)
+      resource->expire = expire;
+    else
+      resource->expire = MAX_AGE_DEFAULT;
+
     return CoapPDU::COAP_CHANGED;
 }
 
@@ -594,8 +600,8 @@ void remove_all_resources(Resource* resource, bool is_head, Resource* parent, Re
     response->setCode(CoapPDU::COAP_NOT_FOUND);
     while (sub != NULL) {
         response->setToken((uint8_t*)&sub->token, sub->token_len);
-        sendto(
-            sockfd,
+	sendto(
+	    sockfd,
             response->getPDUPointer(),
             response->getPDULength(),
             0,
@@ -785,7 +791,6 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                 response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
                 break;
     };
-
     ssize_t sent = sendto(
         sockfd,
         response->getPDUPointer(),
@@ -868,26 +873,28 @@ int main(int argc, char **argv) {
     
     CoapPDU *recvPDU = new CoapPDU((uint8_t*)buffer, BUF_LEN, BUF_LEN);
     
-    while (1) {
+      struct timeval tv;
+      tv.tv_sec = GC_TIMEOUT;
+      tv.tv_usec = 0;
+
+      while (1) {
 
       FD_ZERO(&read_fds);
       FD_ZERO(&write_fds);
       FD_SET(sockfd, &read_fds);
 
-      struct timeval tv;
-      tv.tv_sec = 10;
-      tv.tv_usec = 0;
-
-      int n = select(sockfd+1, &read_fds, &write_fds, 0, &tv);
-
+      int n = select(sockfd+1, &read_fds, NULL, 0, &tv);
+      
       if(n < 0) {
 	perror("ERROR Server : select()\n");
 	close(sockfd);
 	exit(1);
       }
       if (n == 0)  {
-	      /* TIMEOUT */
-	printf("Timeout\n");
+	tv.tv_sec = GC_TIMEOUT;
+	tv.tv_usec = 0;
+	/* TIMEOUT */
+	// do_gc()
 	continue;
       }
       if(FD_ISSET(sockfd, &read_fds)) {
