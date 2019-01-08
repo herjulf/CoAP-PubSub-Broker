@@ -94,6 +94,9 @@ static std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator> subscrib
 
 int background = 0; // Run process as daemon
 
+/* get_all_topics() traverses the whole tree structure that stores the topics. 
+   It builds a dynamically-allocated linked-list of all the topics. */
+
 void get_all_topics(struct Item<Resource*>* &item, Resource* head) {
     if (head->children != NULL) {
         get_all_topics(item, head->children);
@@ -558,7 +561,11 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
     uint32_t expire = 0;
 
     while (num_options-- > 0) {
-        if (options[num_options].optionNumber == CoapPDU::COAP_OPTION_CONTENT_FORMAT) {
+
+      /* Content type for the publish must be the same as 
+	 the previous create */
+
+      if (options[num_options].optionNumber == CoapPDU::COAP_OPTION_CONTENT_FORMAT) {
             ct_exists = true;
             uint16_t val = 0;
             uint8_t* option_value = options[num_options].optionValuePointer;
