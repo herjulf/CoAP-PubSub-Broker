@@ -2,6 +2,7 @@
 #include "nethelper.h"
 #include <netdb.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,10 @@
 #define OPT_NUM 6
 #define PS_DISCOVERY "/.well-known/core?rt=core.ps"
 #define DISCOVERY "/.well-known/core"
+
+#define GC_TIMEOUT 1
+#define MAX_AGE_DEFAULT 60
+
 
 /* Testing
 coap get "coap://127.0.0.1:5683/.well-known/core?ct=0&rt=temperature"
@@ -77,6 +82,7 @@ typedef struct Resource {
     const char* rt;
     CoapPDU::ContentFormat ct;
     const char* val;
+    uint32_t expire;
     Resource * children;
     Resource * next;
     SubItem* subs;
@@ -85,7 +91,10 @@ typedef struct Resource {
 static Resource* head;
 static Resource* ps_discover;
 static Resource* discover;
+static int num_topics_deleted;
 static std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator> subscribers;
+
+int background = 0; // Run as daemon
 
 void get_all_topics(struct Item<Resource*>* &item, Resource* head) {
     if (head->children != NULL) {
@@ -258,6 +267,84 @@ void update_discovery(Resource* discover) {
     char* d = new char[s.length()];
     std::memcpy(d, s.c_str(), s.length());
     discover->val = d;
+}
+
+void remove_all_resources(Resource* r, bool is_head, Resource* parent, Resource* prev, int sockfd, int addrLen);
+int sockfd;
+
+void run_gc(void) {
+  struct Item<Resource*>* current = NULL;
+  socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
+  get_all_topics(current, head);
+  while(current) {
+
+    printf("run_gc: uri=%s ct=%u rt=%u val=%s expire=%u current=%x next=%x child=%x\n",
+	   current->val->uri, current->val->ct, current->val->rt, current->val->val,
+	   current->val->expire, current, current->val->next, current->val->children);
+
+    /* We shall not GC permanent extries (with 0) */
+    if(current->val->expire) {
+      if(current->val->expire > GC_TIMEOUT) {
+	current->val->expire -= GC_TIMEOUT;
+      }
+      else {
+	Resource *r, *prev, *parent;
+	printf("GC ");
+	r = find_resource(current->val->uri, head, &parent, &prev);
+	printf(" r=%p parent=%p prev=%p", r, parent, prev);
+	remove_all_resources(r, true, parent, prev, sockfd, addrLen);
+	printf(" Done\n");
+      }
+    }
+    struct Item<Resource*>* tmp = current->next;
+    delete current;
+    current = tmp;
+  }
+}
+
+
+bool is_expired(Resource *r)
+{
+  // decrement 'expire'
+  printf("run_gc: uri=%s ct=%u rt=%u val=%s expire=%u current=%x next=%x child=%x\n",
+	 r->uri, r->ct, r->rt, r->val,
+	 r->expire, r, r->next, r->children);
+
+  /* We shall not GC permanent extries (with 0) */
+  if(! r->expire)
+    return 0;
+    
+  if(r->expire > GC_TIMEOUT) {
+    r->expire -= GC_TIMEOUT;
+    return 0;
+  }
+  return 1;
+}
+// parent är förälder till head
+// prev är den föregående granne till head
+void do_gc(Resource* head, Resource* parent, Resource* prev) {
+  socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
+  if (! is_expired (head)) {
+
+    if (head->children != NULL) {
+      // 'children' har 'head' som förälder och ingen föregående granne
+      do_gc(head->children, head, NULL);
+    }
+
+    if (head->next != NULL) {
+      // 'parent' är fortfarande förälder till 'next'
+      // och 'head' är den föregående grannen till 'next'
+      do_gc(head->next, parent, head);
+    }
+  } else {
+    // ...
+    Resource* r = head->next;
+    printf("run_gc: Remove uri=%s r=%p parent=%p prev=%p\n", head->uri, head, parent, prev);
+    remove_all_resources(head, true, parent, prev, sockfd, addrLen);
+    if (r) {    // Om r!=NULL
+      do_gc(r, parent, prev); // Vi har ju tagit bort 'head' ur kedjan.
+    }
+  }
 }
 
 CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &payload, struct yuarel_param* queries, int num_queries) {
@@ -480,7 +567,8 @@ CoapPDU::Code get_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* 
 CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &payload, struct yuarel_param* queries, int num_queries) {
     if (resource->ct != CoapPDU::COAP_CONTENT_FORMAT_APP_LINK)
         return CoapPDU::COAP_BAD_REQUEST;
-    
+
+
     char * p = (char *) strchr(in, '<');
     int start = (int)(p-in);
     p = (char *) strchr(in, '>');
@@ -534,7 +622,7 @@ CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &pay
     resource->children = new_resource;
     new_resource->children = NULL;
     new_resource->subs = NULL;
-    
+    new_resource->expire=190;
     payload = resource_uri;
     // update_discovery(discover);
     return CoapPDU::COAP_CREATED;
@@ -548,6 +636,9 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
     CoapPDU::CoapOption* options = pdu->getOptions();
     int num_options = pdu->getNumOptions();
     bool ct_exists = false;
+    bool maxage_exists = false;
+    uint32_t expire = 0;
+
     while (num_options-- > 0) {
         if (options[num_options].optionNumber == CoapPDU::COAP_OPTION_CONTENT_FORMAT) {
             ct_exists = true;
@@ -563,18 +654,40 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
                 return CoapPDU::COAP_NOT_FOUND;
             break;
         }
+
+        if (options[num_options].optionNumber == CoapPDU::COAP_OPTION_MAX_AGE) {
+            maxage_exists = true;
+            uint8_t* option_value = options[num_options].optionValuePointer;
+            for (int i = 0; i < options[num_options].optionValueLength; i++) {
+                expire <<= 8;
+                expire += *option_value;
+		option_value++;
+            }
+        }
     }
     
     if (!ct_exists) {
         return CoapPDU::COAP_BAD_REQUEST;
     }
-    
+
+    //// 
     const char* payload = (const char*)pdu->getPayloadPointer();
+    //char* payload = (char*)pdu->getPayloadPointer();
+    //payload[URI_BUF_LEN] = '\0';
     char* val = new char[strlen(payload)+1];
+
+    if(strlen(payload) == URI_BUF_LEN)
+      printf("*** ERROR\n");
+
     strcpy(val, payload);
     //const char* val = (const char*)pdu->getPayloadCopy();
     delete[] resource->val;
     resource->val = val;
+    if(maxage_exists)
+      resource->expire = expire;
+    else
+      resource->expire = MAX_AGE_DEFAULT;
+
     return CoapPDU::COAP_CHANGED;
 }
 
@@ -594,8 +707,8 @@ void remove_all_resources(Resource* resource, bool is_head, Resource* parent, Re
     response->setCode(CoapPDU::COAP_NOT_FOUND);
     while (sub != NULL) {
         response->setToken((uint8_t*)&sub->token, sub->token_len);
-        sendto(
-            sockfd,
+    	sendto(
+    	    sockfd,
             response->getPDUPointer(),
             response->getPDULength(),
             0,
@@ -631,6 +744,8 @@ void remove_all_resources(Resource* resource, bool is_head, Resource* parent, Re
         delete resource;
 	// std::cerr<<"**************** is_head == TRUE Deleted resource in ELSE \n";
     }
+    num_topics_deleted+=1;
+    printf("num topics deleted = %d\n", num_topics_deleted);
 }
 
 CoapPDU::Code delete_remove_handler(Resource* resource, Resource* parent, Resource* prev, int sockfd, socklen_t addrLen) {
@@ -695,6 +810,7 @@ void initialize() {
     head = ps;
 
     // update_discovery(discover);
+    num_topics_deleted = 0;
 }
 
 int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockaddr_in* recvAddr) {
@@ -744,7 +860,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                 response->setCode(code);
                 if (code == CoapPDU::COAP_CONTENT) {
                     std::string payload_str = payload_stream->str();
-                    char payload[payload_str.length()];
+                    char payload[payload_str.length()+1];
                     std::strcpy(payload, payload_str.c_str());
                     response->setContentFormat(resource->ct);
                     response->setPayload((uint8_t*)payload, strlen(payload));
@@ -785,7 +901,6 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                 response->setType(CoapPDU::COAP_ACKNOWLEDGEMENT);
                 break;
     };
-
     ssize_t sent = sendto(
         sockfd,
         response->getPDUPointer(),
@@ -868,26 +983,59 @@ int main(int argc, char **argv) {
     
     CoapPDU *recvPDU = new CoapPDU((uint8_t*)buffer, BUF_LEN, BUF_LEN);
     
-    while (1) {
+      struct timeval tv;
+      tv.tv_sec = GC_TIMEOUT;
+      tv.tv_usec = 0;
+
+      if(background) {
+	pid_t pid, sid;    
+	pid = fork();
+      
+	if (pid < 0) {
+	  std::cerr << "Failed to fork, error code [" << pid << "]. Exitting";
+	  return EXIT_FAILURE;
+	} else if(pid > 0) {
+	  return EXIT_SUCCESS;
+      }
+	
+	umask(0);
+	/* Set new signature ID for the child */
+	
+	sid = setsid();
+      
+	if (sid < 0) {
+	  std::cerr << "Failed to setsid, error code [" << sid << "]. Exiting";
+	  return EXIT_FAILURE;
+	}
+
+	if ((chdir("/")) < 0) {
+	  std::cerr << "Failed to change directory to /. Exiting";
+	  return EXIT_FAILURE;
+	}
+	close(STDIN_FILENO);
+	close(STDOUT_FILENO);
+	close(STDERR_FILENO);
+      }
+
+      while (1) {
 
       FD_ZERO(&read_fds);
       FD_ZERO(&write_fds);
       FD_SET(sockfd, &read_fds);
 
-      struct timeval tv;
-      tv.tv_sec = 10;
-      tv.tv_usec = 0;
-
-      int n = select(sockfd+1, &read_fds, &write_fds, 0, &tv);
-
+      int n = select(sockfd+1, &read_fds, NULL, 0, &tv);
+      
       if(n < 0) {
 	perror("ERROR Server : select()\n");
 	close(sockfd);
 	exit(1);
       }
       if (n == 0)  {
-	      /* TIMEOUT */
-	printf("Timeout\n");
+	tv.tv_sec = GC_TIMEOUT;
+	tv.tv_usec = 0;
+	/* TIMEOUT */
+	//run_gc();
+	do_gc(head, NULL, NULL);
 	continue;
       }
       if(FD_ISSET(sockfd, &read_fds)) {
