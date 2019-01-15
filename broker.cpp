@@ -274,37 +274,6 @@ void update_discovery(Resource* discover) {
 void remove_all_resources(Resource* r, bool is_head, Resource* parent, Resource* prev, int sockfd, int addrLen);
 int sockfd;
 
-void run_gc(void) {
-  struct Item<Resource*>* current = NULL;
-  socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
-  get_all_topics(current, head);
-  while(current) {
-
-    printf("run_gc: uri=%s ct=%u rt=%u val=%s expire=%u current=%x next=%x child=%x\n",
-	   current->val->uri, current->val->ct, current->val->rt, current->val->val,
-	   current->val->expire, current, current->val->next, current->val->children);
-
-    /* We shall not GC permanent extries (with 0) */
-    if(current->val->expire) {
-      if(current->val->expire > GC_TIMEOUT) {
-	current->val->expire -= GC_TIMEOUT;
-      }
-      else {
-	Resource *r, *prev, *parent;
-	printf("GC ");
-	r = find_resource(current->val->uri, head, &parent, &prev);
-	printf(" r=%p parent=%p prev=%p", r, parent, prev);
-	remove_all_resources(r, true, parent, prev, sockfd, addrLen);
-	printf(" Done\n");
-      }
-    }
-    struct Item<Resource*>* tmp = current->next;
-    delete current;
-    current = tmp;
-  }
-}
-
-
 bool is_expired(Resource *r)
 {
   // decrement 'expire'
@@ -322,20 +291,16 @@ bool is_expired(Resource *r)
   }
   return 1;
 }
-// parent är förälder till head
-// prev är den föregående granne till head
+
 void do_gc(Resource* head, Resource* parent, Resource* prev) {
   socklen_t addrLen = sizeof(struct sockaddr_in); // We only use IPv4
   if (! is_expired (head)) {
 
     if (head->children != NULL) {
-      // 'children' har 'head' som förälder och ingen föregående granne
       do_gc(head->children, head, NULL);
     }
 
     if (head->next != NULL) {
-      // 'parent' är fortfarande förälder till 'next'
-      // och 'head' är den föregående grannen till 'next'
       do_gc(head->next, parent, head);
     }
   } else {
@@ -343,8 +308,8 @@ void do_gc(Resource* head, Resource* parent, Resource* prev) {
     Resource* r = head->next;
     printf("run_gc: Remove uri=%s r=%p parent=%p prev=%p\n", head->uri, head, parent, prev);
     remove_all_resources(head, true, parent, prev, sockfd, addrLen);
-    if (r) {    // Om r!=NULL
-      do_gc(r, parent, prev); // Vi har ju tagit bort 'head' ur kedjan.
+    if (r) {   
+      do_gc(r, parent, prev); 
     }
   }
 }
@@ -401,7 +366,6 @@ CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &paylo
             *val << "<" << current->val->uri << ">;rt=\"" 
                 << current->val->rt << "\";ct=" << current->val->ct;
         }
-                
         struct Item<Resource*>* tmp = current->next;
         delete current;
         current = tmp;
@@ -410,12 +374,10 @@ CoapPDU::Code get_discover_handler(Resource* resource, std::stringstream* &paylo
             *val << ",";
         }
     }
-    
     if (empty_stringstream) {
         delete val;
         return CoapPDU::COAP_NOT_FOUND;
     }
-    
     payload = val;
     return CoapPDU::COAP_CONTENT;
 }
@@ -465,16 +427,13 @@ CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct 
                         resource->subs = sub->next;
                     }
                     delete sub;
-                }
-                
+                } 
                 break;
             }
-            
             prev = sub;
             sub = sub->next;
         }
-    }
-    
+    } 
     if (already_subscribed && !subscribe) {
         struct SubscriberInfo& subscriber = subscribers[*recvAddr];
         subscriber.subscriptions--;
@@ -521,8 +480,7 @@ CoapPDU::Code get_subscription_handler(Resource* resource, CoapPDU* pdu, struct 
 			    token_pointer++;
 			    i++;
 		    }
-        }
-        
+        } 
         response->addOption(CoapPDU::COAP_OPTION_OBSERVE, 1, (uint8_t*)&sub->observe); // TODO FIX 1 to 3
         sub->observe++;
         sub->observe &= 0x7FFFFF;
@@ -552,7 +510,6 @@ CoapPDU::Code get_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* 
                 }
                 observe++;
             }
-            
             if (!is_subscribe && *observe == 1)
                 is_unsubscribe = true;
             break;
@@ -571,8 +528,6 @@ CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &pay
         return CoapPDU::COAP_BAD_REQUEST;
     if( topic_count == MAX_TOPIC)
         return CoapPDU::COAP_FORBIDDEN;
-
-
     char * p = (char *) strchr(in, '<');
     int start = (int)(p-in);
     p = (char *) strchr(in, '>');
@@ -674,8 +629,6 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
     if (!ct_exists) {
         return CoapPDU::COAP_BAD_REQUEST;
     }
-
-    //// 
     const char* payload = (const char*)pdu->getPayloadPointer();
     //char* payload = (char*)pdu->getPayloadPointer();
     //payload[URI_BUF_LEN] = '\0';
@@ -760,7 +713,6 @@ CoapPDU::Code delete_remove_handler(Resource* resource, Resource* parent, Resour
     } else if (prev != NULL) {
         prev->next = resource->next;
     }*/
-    
     remove_all_resources(resource, true, parent, prev, sockfd, addrLen);
     return CoapPDU::COAP_DELETED;
 }
@@ -847,8 +799,7 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
         response->setCode(CoapPDU::COAP_NOT_FOUND);
         //response->setContentFormat(resource->ct);
         resource_found = false;
-    }
-    
+    } 
     bool publish_to_all = false;    
     if (resource_found) {
         char* queries = strstr(uri_buffer, "?");
@@ -900,7 +851,6 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
             }
         }
     }
-
     // TODO Is the switch statement redundant here?
     switch(recvPDU->getType()) {
         case CoapPDU::COAP_CONFIRMABLE:
@@ -915,7 +865,6 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
         (struct sockaddr*) &(*recvAddr),
         addrLen
     );
-    
     //delete response;
     if (publish_to_all) {
         SubItem* subscriber = resource->subs;
@@ -935,20 +884,17 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
                 0,
                 (struct sockaddr*) &(subscriber->it->first),
                 addrLen
-            );
-            
+            );  
             response->reset();
             subscriber->observe++;
             subscriber->observe &= 0x7FFFFF; // TODO: Implement it differently
             subscriber = subscriber->next;
         }   
-    }
-    
+    }  
     delete response;
     if(sent < 0) {
         return 1;
     }
-    
     return 0;
 }
 
@@ -1006,9 +952,7 @@ int main(int argc, char **argv) {
 	
 	umask(0);
 	/* Set new signature ID for the child */
-	
-	sid = setsid();
-      
+	sid = setsid();  
 	if (sid < 0) {
 	  std::cerr << "Failed to setsid, error code [" << sid << "]. Exiting";
 	  return EXIT_FAILURE;
@@ -1024,7 +968,6 @@ int main(int argc, char **argv) {
       }
 
       while (1) {
-
       FD_ZERO(&read_fds);
       FD_ZERO(&write_fds);
       FD_SET(sockfd, &read_fds);
@@ -1040,7 +983,6 @@ int main(int argc, char **argv) {
 	tv.tv_sec = GC_TIMEOUT;
 	tv.tv_usec = 0;
 	/* TIMEOUT */
-	//run_gc();
 	do_gc(head, NULL, NULL);
 	continue;
       }
