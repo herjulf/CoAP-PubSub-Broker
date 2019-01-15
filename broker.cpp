@@ -594,9 +594,14 @@ CoapPDU::Code put_publish_handler(Resource* resource, CoapPDU* pdu) {
     if (!ct_exists) {
         return CoapPDU::COAP_BAD_REQUEST;
     }
-    
+
     const char* payload = (const char*)pdu->getPayloadPointer();
-    char* val = new char[strlen(payload)+1];
+    size_t payload_len = strnlen(payload, BUF_LEN);
+
+    if(payload_len == BUF_LEN)
+      return CoapPDU::COAP_BAD_REQUEST;
+
+    char* val = new char[payload_len+1];
     strcpy(val, payload);
     //const char* val = (const char*)pdu->getPayloadCopy();
     delete[] resource->val;
