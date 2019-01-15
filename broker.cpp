@@ -24,8 +24,10 @@
 #define DISCOVERY "/.well-known/core"
 
 #define GC_TIMEOUT 1
-#define MAX_AGE_DEFAULT 60
+#define MAX_AGE_DEFAULT 15
 
+#define MAX_TOPIC 10
+static int topic_count;
 
 /* Testing
 coap get "coap://127.0.0.1:5683/.well-known/core?ct=0&rt=temperature"
@@ -567,7 +569,8 @@ CoapPDU::Code get_handler(Resource* resource, CoapPDU* pdu, struct sockaddr_in* 
 CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &payload, struct yuarel_param* queries, int num_queries) {
     if (resource->ct != CoapPDU::COAP_CONTENT_FORMAT_APP_LINK)
         return CoapPDU::COAP_BAD_REQUEST;
-
+    if( topic_count == MAX_TOPIC)
+        return CoapPDU::COAP_FORBIDDEN;
 
     char * p = (char *) strchr(in, '<');
     int start = (int)(p-in);
@@ -622,9 +625,10 @@ CoapPDU::Code post_create_handler(Resource* resource, const char* in, char* &pay
     resource->children = new_resource;
     new_resource->children = NULL;
     new_resource->subs = NULL;
-    new_resource->expire=190;
+    new_resource->expire=MAX_AGE_DEFAULT;
     payload = resource_uri;
     // update_discovery(discover);
+    topic_count = topic_count + 1;
     return CoapPDU::COAP_CREATED;
 }
 
@@ -745,6 +749,9 @@ void remove_all_resources(Resource* resource, bool is_head, Resource* parent, Re
 	// std::cerr<<"**************** is_head == TRUE Deleted resource in ELSE \n";
     }
     num_topics_deleted+=1;
+    //if (topic_count >= 0 ){
+    topic_count -= 1;
+//}
     printf("num topics deleted = %d\n", num_topics_deleted);
 }
 
@@ -756,6 +763,7 @@ CoapPDU::Code delete_remove_handler(Resource* resource, Resource* parent, Resour
     }*/
     
     remove_all_resources(resource, true, parent, prev, sockfd, addrLen);
+    //topic_count = topic_count - 1;
     return CoapPDU::COAP_DELETED;
 }
 
