@@ -26,8 +26,10 @@
 #define GC_TIMEOUT 1
 #define MAX_AGE_DEFAULT 60
 
-#define MAX_TOPIC 10
+#define MAX_TOPIC 1000
 static int topic_count;
+
+int debug = 0;
 
 /* Testing
 coap get "coap://127.0.0.1:5683/.well-known/core?ct=0&rt=temperature"
@@ -277,9 +279,11 @@ int sockfd;
 bool is_expired(Resource *r)
 {
   // decrement 'expire'
-  printf("run_gc: uri=%s ct=%u rt=%u val=%s expire=%u current=%x next=%x child=%x\n",
-	 r->uri, r->ct, r->rt, r->val,
-	 r->expire, r, r->next, r->children);
+
+  if(debug) 
+    printf("run_gc: uri=%s ct=%u rt=%u val=%s expire=%u current=%x next=%x child=%x\n",
+	   r->uri, r->ct, r->rt, r->val,
+	   r->expire, r, r->next, r->children);
 
   /* We shall not GC permanent extries (with 0) */
   if(! r->expire)
@@ -306,7 +310,8 @@ void do_gc(Resource* head, Resource* parent, Resource* prev) {
   } else {
     // ...
     Resource* r = head->next;
-    printf("run_gc: Remove uri=%s r=%p parent=%p prev=%p\n", head->uri, head, parent, prev);
+    if(debug)
+      printf("run_gc: Remove uri=%s r=%p parent=%p prev=%p\n", head->uri, head, parent, prev);
     remove_all_resources(head, true, parent, prev, sockfd, addrLen);
     if (r) {   
       do_gc(r, parent, prev); 
@@ -704,7 +709,8 @@ void remove_all_resources(Resource* resource, bool is_head, Resource* parent, Re
     }
     num_topics_deleted+=1;
     topic_count -= 1;
-    printf("num topics deleted = %d\n", num_topics_deleted);
+    if(debug) 
+      printf("num topics deleted = %d\n", num_topics_deleted);
 }
 
 CoapPDU::Code delete_remove_handler(Resource* resource, Resource* parent, Resource* prev, int sockfd, socklen_t addrLen) {
