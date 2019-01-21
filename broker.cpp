@@ -17,6 +17,8 @@
 #include <map>
 #include "yuarel.h"
 
+#define VERSION "1.3 2019-01-21"
+
 #define BUF_LEN 512
 #define URI_BUF_LEN 128
 #define OPT_NUM 6
@@ -29,7 +31,8 @@
 #define MAX_TOPIC 1000
 static int topic_count;
 
-int debug = 0;
+#define PORT "5683"
+#define HOST "localhost"
 
 /* Testing
 coap get "coap://127.0.0.1:5683/.well-known/core?ct=0&rt=temperature"
@@ -99,6 +102,7 @@ static int num_topics_deleted;
 static std::map<sockaddr_in,struct SubscriberInfo,SubscriberComparator> subscribers;
 
 int background = 0; // Run as daemon
+int debug = 0;
 
 void get_all_topics(struct Item<Resource*>* &item, Resource* head) {
     if (head->children != NULL) {
@@ -909,20 +913,47 @@ int handle_request(char *uri_buffer, CoapPDU *recvPDU, int sockfd, struct sockad
     return 0;
 }
 
-int main(int argc, char **argv) { 
+void usage(void)
+{
+  printf("\nVersion %s\n", VERSION);
+  printf("\ncoap: A CoAP pubsub broker\n");
+  printf("  * \n");
+  printf("\nbroker [-d] [-b] [-p port] [-addr host]\n");
+  printf(" -addr          -- server address. Default localhost\n");
+  printf(" -p port        -- UDP server port. Default %s\n", PORT);
+  printf(" -b             -- run in background\n");
+  printf(" -d             -- debug\n");
+    exit(-1);
+}
+
+int main(int ac, char **av) { 
 
   fd_set read_fds, write_fds;
+  char* str_port = (char *) PORT;
+  char* str_address = (char *) HOST;
+  int i;
 
-    if (argc < 3)
-    {
-        printf("USAGE: %s address port\n", argv[0]);
-        return -1;
-    }
+  for(i = 1; (i < ac) && (av[i][0] == '-'); i++)  {
+    if (strncmp(av[i], "-addr", 5) == 0) 
+      str_address = av[++i];
+    else if (strncmp(av[i], "-h", 2) == 0) 
+      usage();
+    else if (strncmp(av[i], "-d", 2) == 0)
+      debug = 3;
+    else if (strncmp(av[i], "-p", 2) == 0)
+      str_port = av[++i];
+    else if (strncmp(av[i], "-b", 2) == 0) 
+      background = 1;
+  }
+
+    if(debug) {
+    printf("DEBUG host=%s\n", str_address);
+    printf("DEBUG port=%s\n", str_port);
+    printf("DEBUG background=%d\n", background);
+  }
     
     initialize();
-    
-    char* str_address = argv[1];
-    char* str_port = argv[2];
+
     struct addrinfo *addr;
     
     int ret = setupAddress(str_address, str_port, &addr, SOCK_DGRAM, AF_INET);
