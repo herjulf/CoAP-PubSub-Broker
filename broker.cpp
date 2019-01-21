@@ -293,7 +293,12 @@ bool is_expired(Resource *r)
     r->expire -= GC_TIMEOUT;
     return 0;
   }
-  return 1;
+
+  /* Don't GC link that have active entries */
+  if(r->children)
+    return 0;
+
+    return 1;
 }
 
 void do_gc(Resource* head, Resource* parent, Resource* prev) {
